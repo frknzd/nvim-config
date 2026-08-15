@@ -69,6 +69,111 @@ local function open_hover_link(uri)
   end
 end
 
+local function cursor_is_in_function_arguments()
+  local ok, node = pcall(vim.treesitter.get_node, { ignore_injections = false })
+  if not ok then
+    return false
+  end
+
+  while node do
+    local node_type = node:type()
+    if
+      node_type:find("argument", 1, true)
+      and not node_type:find("type_argument", 1, true)
+      and not node_type:find("generic_argument", 1, true)
+      and not node_type:find("template_argument", 1, true)
+    then
+      return true
+    end
+    node = node:parent()
+  end
+
+  return false
+end
+
+local signature_inactive_namespace = vim.api.nvim_create_namespace("blink_signature_inactive")
+
+local function dim_inactive_signature_help(signature_window)
+  local buffer = signature_window.win:get_buf()
+  if not vim.api.nvim_buf_is_valid(buffer) then
+    return
+  end
+
+  vim.api.nvim_buf_clear_namespace(buffer, signature_inactive_namespace, 0, -1)
+
+  local blink_namespace = require("blink.cmp.config").appearance.highlight_ns
+  local active_mark
+  for _, mark in ipairs(vim.api.nvim_buf_get_extmarks(buffer, blink_namespace, 0, -1, { details = true })) do
+    if
+      mark[4].hl_group == "BlinkCmpSignatureHelpActiveParameter"
+      and (not active_mark or mark[1] > active_mark[1])
+    then
+      active_mark = mark
+    end
+  end
+  if not active_mark then
+    return
+  end
+
+  local lines = vim.api.nvim_buf_get_lines(buffer, 0, -1, false)
+  local last_signature_line = #lines - 1
+  for line, text in ipairs(lines) do
+    if text == "" then
+      last_signature_line = line - 2
+      break
+    end
+  end
+
+  local active_start_line = active_mark[2]
+  local active_start_column = active_mark[3]
+  local active_end_line = active_mark[4].end_row or active_start_line
+  local active_end_column = active_mark[4].end_col or active_start_column
+
+  local function dim(line, start_column, end_column)
+    if start_column >= end_column then
+      return
+    end
+    vim.api.nvim_buf_set_extmark(buffer, signature_inactive_namespace, line, start_column, {
+      end_col = end_column,
+      hl_group = "BlinkCmpSignatureHelpInactive",
+      priority = 4097,
+    })
+  end
+
+  for line = 0, last_signature_line do
+    local line_length = #(lines[line + 1] or "")
+    if line < active_start_line or line > active_end_line then
+      dim(line, 0, line_length)
+    elseif line == active_start_line then
+      dim(line, 0, active_start_column)
+    end
+    if line == active_end_line then
+      dim(line, active_end_column, line_length)
+    end
+  end
+end
+
+local function preserve_active_signature_highlights()
+  local signature_window = require("blink.cmp.signature.window")
+  if signature_window.inactive_highlights_installed then
+    return
+  end
+
+  -- Blink enables wrapping here but, unlike its completion documentation
+  -- window, does not enable word-aware line breaks. The same window contains
+  -- both the signature and its documentation, so this keeps either section
+  -- from wrapping in the middle of a type or prose word.
+  signature_window.win.config.linebreak = true
+
+  local open_with_signature_help = signature_window.open_with_signature_help
+  signature_window.open_with_signature_help = function(...)
+    local result = open_with_signature_help(...)
+    dim_inactive_signature_help(signature_window)
+    return result
+  end
+  signature_window.inactive_highlights_installed = true
+end
+
 return {
   -- zls inserts `print(comptime fmt: []const u8, args: anytype)` as snippet
   -- placeholders when this is on. Turn it off so accept inserts `print()`.
@@ -138,7 +243,38 @@ return {
   -- zls retriggers on `,` so the highlight advances to the next parameter.
   {
     "saghen/blink.cmp",
+    init = function()
+      vim.api.nvim_create_autocmd("User", {
+        pattern = "LazyLoad",
+        callback = function(event)
+          if event.data == "blink.cmp" then
+            preserve_active_signature_highlights()
+            return true
+          end
+        end,
+      })
+    end,
     opts = {
+      keymap = {
+        -- One context-sensitive popup toggle: signature help inside function
+        -- arguments, completion everywhere else.
+        ["<C-space>"] = {
+          function(cmp)
+            if cmp.is_visible() or cmp.is_signature_visible() then
+              cmp.hide()
+              cmp.hide_signature()
+              return true
+            end
+
+            if cursor_is_in_function_arguments() then
+              return cmp.show_signature()
+            end
+            return cmp.show()
+          end,
+        },
+        ["<C-e>"] = false,
+        ["<C-k>"] = false,
+      },
       completion = {
         menu = {
           -- A compact, adaptive menu is easier to scan than a full-width strip.
@@ -240,10 +376,9 @@ return {
           show_on_accept = true,
         },
         window = {
-          show_documentation = false,
-          min_width = 30,
-          max_width = 72,
-          max_height = 8,
+          show_documentation = true,
+          -- Keep each token's usual syntax color in the active parameter.
+          treesitter_highlighting = true,
           border = "rounded",
           scrollbar = false,
         },

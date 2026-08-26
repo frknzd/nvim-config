@@ -208,7 +208,7 @@ function M.ensure(opts, on_status, callback)
     tostring(opts.context_size),
     "--no-mmproj",
   })
-  if opts.reasoning_budget then
+  if opts.reasoning_budget ~= nil then
     vim.list_extend(args, { "--reasoning-budget", tostring(opts.reasoning_budget) })
     if opts.reasoning_budget_message then
       vim.list_extend(args, { "--reasoning-budget-message", opts.reasoning_budget_message })

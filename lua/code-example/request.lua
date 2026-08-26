@@ -15,7 +15,7 @@ local function feed_sse(parser, chunk)
       if ok then
         local choice = decoded.choices and decoded.choices[1]
         local content = choice and choice.delta and choice.delta.content
-        if content and content ~= "" then
+        if type(content) == "string" and content ~= "" then
           vim.schedule(function()
             parser.on_chunk(content)
           end)

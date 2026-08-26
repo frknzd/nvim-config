@@ -26,7 +26,6 @@ local activity_words = {
 ---@field thinking_content string
 ---@field status_message string
 ---@field status_index integer
----@field status_timer uv.uv_timer_t?
 ---@field on_retry fun()?
 ---@field on_cancel fun()?
 
@@ -79,7 +78,7 @@ function View:render_status(message, kind)
   local hl = kind == "error" and "DiagnosticError" or kind == "done" and "DiagnosticOk" or "DiagnosticInfo"
   local footer
   if kind == "busy" then
-    local activity = activity_words[self.status_index]
+    local activity = activity_words[math.max(1, self.status_index)]
     footer = {
       { (" %s "):format(activity[1]), activity[2] },
       { ("· %s "):format(message), "Comment" },
@@ -93,38 +92,15 @@ function View:render_status(message, kind)
   })
 end
 
-function View:stop_status_animation()
-  if self.status_timer then
-    self.status_timer:stop()
-    self.status_timer:close()
-    self.status_timer = nil
-  end
-end
-
-function View:status(message, kind)
+function View:status(message, kind, cycle)
   if not self:is_valid() then
     return
   end
   self.status_message = message
-  if kind ~= "busy" then
-    self:stop_status_animation()
-    self:render_status(message, kind)
-    return
-  end
-  self.status_index = self.status_index or 1
-  self:render_status(message, kind)
-  if self.status_timer then
-    return
-  end
-  self.status_timer = vim.uv.new_timer()
-  self.status_timer:start(500, 500, vim.schedule_wrap(function()
-    if not self:is_valid() then
-      self:stop_status_animation()
-      return
-    end
+  if kind == "busy" and cycle then
     self.status_index = self.status_index % #activity_words + 1
-    self:render_status(self.status_message, "busy")
-  end))
+  end
+  self:render_status(message, kind)
 end
 
 function View:set_content(content)
@@ -146,7 +122,6 @@ function View:append(content)
 end
 
 function View:close()
-  self:stop_status_animation()
   if self.on_cancel then
     self.on_cancel()
   end
@@ -219,7 +194,6 @@ function M.open(title)
     thinking_content = "",
     status_message = "",
     status_index = 1,
-    status_timer = nil,
   }, View)
   for _, target_buf in ipairs({ buf, thinking_buf }) do
     vim.keymap.set("n", "q", function()

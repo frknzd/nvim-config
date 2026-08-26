@@ -118,6 +118,7 @@ local function run_agent(view, url, messages, tool_session, generation, state)
   if not view:is_valid() or view.generation ~= generation then
     return
   end
+  view:status("New model response", "busy", true)
   local payload = {
     model = opts.model,
     stream = true,
@@ -188,7 +189,7 @@ local function run_agent(view, url, messages, tool_session, generation, state)
         end
         call.id = call.id or ("code_example_tool_%d_%d"):format(state.rounds, index)
         local tool_name = call["function"] and call["function"].name or "unknown"
-        view:status("Tool · " .. tool_name, "busy")
+        view:status("Tool · " .. tool_name, "busy", true)
         view:append_thinking("\n\n" .. tool_label(call) .. "\n")
         require("code-example.tools").execute(tool_session, call, function(tool_result)
           if not view:is_valid() or view.generation ~= generation then

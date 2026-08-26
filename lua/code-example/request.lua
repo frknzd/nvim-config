@@ -14,6 +14,9 @@ local function feed_sse(parser, chunk)
       local ok, decoded = pcall(vim.json.decode, data)
       if ok then
         local choice = decoded.choices and decoded.choices[1]
+        if choice and choice.finish_reason then
+          parser.finish_reason = choice.finish_reason
+        end
         local content = choice and choice.delta and choice.delta.content
         local reasoning = choice and choice.delta and choice.delta.reasoning_content
         if type(content) == "string" and content ~= "" then
@@ -59,7 +62,7 @@ function M.start(url, payload, callbacks)
   }, function(result)
     vim.schedule(function()
       if result.code == 0 then
-        callbacks.on_done()
+        callbacks.on_done(parser.finish_reason)
       elseif result.signal ~= 15 then
         callbacks.on_error(vim.trim(table.concat(stderr)) ~= "" and vim.trim(table.concat(stderr)) or "Request failed")
       end

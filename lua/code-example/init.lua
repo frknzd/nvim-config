@@ -6,7 +6,7 @@ local defaults = {
   model = "unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL",
   model_size_gb = 2.78,
   context_size = 8192,
-  max_output_tokens = 1600,
+  max_output_tokens = nil,
   startup_timeout = 300,
   idle_timeout = 600,
   context_radius = 35,
@@ -118,29 +118,34 @@ local function generate(view, source)
       view:set_content("")
       view:set_thinking("Thinking…\n\n")
       view:status("Generating", "busy")
-      active_cancel = require("code-example.request").start(url, {
+      local payload = {
         model = opts.model,
         stream = true,
         temperature = 0.2,
-        max_tokens = opts.max_output_tokens,
         messages = {
           { role = "system", content = "You are a precise coding teacher. Prefer compilable, idiomatic examples." },
           { role = "user", content = prompt(context) },
         },
-      }, {
+      }
+      if opts.max_output_tokens then
+        payload.max_tokens = opts.max_output_tokens
+      end
+      active_cancel = require("code-example.request").start(url, payload, {
         on_chunk = function(chunk)
           view:append(chunk)
         end,
         on_reasoning = function(chunk)
           view:append_thinking(chunk)
         end,
-        on_done = function()
+        on_done = function(finish_reason)
           active_cancel = nil
           require("code-example.server").idle(opts.idle_timeout)
           if view:is_valid() then
             view:status("Complete", "done")
             if view.content == "" then
-              view:set_content("_The model finished without producing a final answer. Press `r` to try again._")
+              local reason = finish_reason == "length" and "The model exhausted the available context"
+                or "The model stopped"
+              view:set_content(("_%s without producing a final answer. Press `r` to try again._"):format(reason))
             end
           end
         end,

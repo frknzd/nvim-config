@@ -91,6 +91,40 @@ local function append_log(data, on_status)
   end)
 end
 
+local function download_size(model)
+  local repo = model:match("^([^:]+)")
+  if not repo then
+    return nil
+  end
+  local hf_home = vim.env.HF_HOME or vim.fn.expand("~/.cache/huggingface")
+  local model_dir = "models--" .. repo:gsub("/", "--")
+  local pattern = vim.fs.joinpath(hf_home, "hub", model_dir, "blobs", "*.downloadInProgress")
+  local total = 0
+  for _, filename in ipairs(vim.fn.glob(pattern, false, true)) do
+    local stat = vim.uv.fs_stat(filename)
+    total = total + (stat and stat.size or 0)
+  end
+  return total > 0 and total or nil
+end
+
+local function report_download(opts, on_status)
+  local bytes = download_size(opts.model)
+  if not bytes then
+    return
+  end
+  local downloaded_gb = bytes / 1000000000
+  local status
+  if opts.model_size_gb then
+    local percent = math.min(99, math.floor(downloaded_gb / opts.model_size_gb * 100))
+    status = ("Downloading model · %.2f / %.2f GB (%d%%)"):format(downloaded_gb, opts.model_size_gb, percent)
+  else
+    status = ("Downloading model · %.2f GB received"):format(downloaded_gb)
+  end
+  local lines = vim.deepcopy(state.log)
+  lines[#lines + 1] = status
+  on_status(status, lines)
+end
+
 local function poll_ready(url, opts, on_status, started_at)
   health(url, function(ready)
     if ready then
@@ -107,6 +141,7 @@ local function poll_ready(url, opts, on_status, started_at)
       notify_waiters(nil, "Timed out waiting for the model to load")
       return
     end
+    report_download(opts, on_status)
     vim.defer_fn(function()
       poll_ready(url, opts, on_status, started_at)
     end, 300)
@@ -171,6 +206,7 @@ function M.ensure(opts, on_status, callback)
     tostring(state.port),
     "-c",
     tostring(opts.context_size),
+    "--no-mmproj",
   })
   state.log[1] = "$ " .. table.concat(args, " ")
   on_status("Starting llama.cpp", vim.deepcopy(state.log))

@@ -4,6 +4,7 @@ local defaults = {
   command = nil,
   endpoint = nil,
   model = "unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL",
+  model_size_gb = 2.78,
   context_size = 8192,
   max_output_tokens = 700,
   startup_timeout = 300,

@@ -15,9 +15,15 @@ local function feed_sse(parser, chunk)
       if ok then
         local choice = decoded.choices and decoded.choices[1]
         local content = choice and choice.delta and choice.delta.content
+        local reasoning = choice and choice.delta and choice.delta.reasoning_content
         if type(content) == "string" and content ~= "" then
           vim.schedule(function()
             parser.on_chunk(content)
+          end)
+        end
+        if type(reasoning) == "string" and reasoning ~= "" and parser.on_reasoning then
+          vim.schedule(function()
+            parser.on_reasoning(reasoning)
           end)
         end
       end
@@ -26,7 +32,7 @@ local function feed_sse(parser, chunk)
 end
 
 function M.start(url, payload, callbacks)
-  local parser = { pending = "", on_chunk = callbacks.on_chunk }
+  local parser = { pending = "", on_chunk = callbacks.on_chunk, on_reasoning = callbacks.on_reasoning }
   local stderr = {}
   local process = vim.system({
     "curl",

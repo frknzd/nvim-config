@@ -6,7 +6,7 @@ local defaults = {
   model = "unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL",
   model_size_gb = 2.78,
   context_size = 8192,
-  max_output_tokens = 700,
+  max_output_tokens = 1600,
   startup_timeout = 300,
   idle_timeout = 600,
   context_radius = 35,
@@ -59,6 +59,7 @@ local function show_server_log(view, status, lines)
     return
   end
   view:status(status, "busy")
+  view:set_thinking(status .. "…")
   local content = {
     "# Starting local model",
     "",
@@ -89,6 +90,7 @@ local function generate(view, source)
     active_cancel = nil
   end
   view:set_content("Preparing context…\n\nPress `q` to close or `r` to regenerate.")
+  view:set_thinking("Waiting for LSP context…")
   view:status("Inspecting LSP context", "busy")
   require("code-example.context").collect(source, opts, function(context, err)
     if not view:is_valid() or view.generation ~= generation then
@@ -114,6 +116,7 @@ local function generate(view, source)
         return
       end
       view:set_content("")
+      view:set_thinking("Thinking…\n\n")
       view:status("Generating", "busy")
       active_cancel = require("code-example.request").start(url, {
         model = opts.model,
@@ -128,11 +131,17 @@ local function generate(view, source)
         on_chunk = function(chunk)
           view:append(chunk)
         end,
+        on_reasoning = function(chunk)
+          view:append_thinking(chunk)
+        end,
         on_done = function()
           active_cancel = nil
           require("code-example.server").idle(opts.idle_timeout)
           if view:is_valid() then
             view:status("Complete", "done")
+            if view.content == "" then
+              view:set_content("_The model finished without producing a final answer. Press `r` to try again._")
+            end
           end
         end,
         on_error = function(request_err)

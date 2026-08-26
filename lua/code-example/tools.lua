@@ -62,6 +62,28 @@ local schemas = {
       required = { "query" },
     },
   },
+  {
+    name = "web_search",
+    description = "Search the public web for current documentation, API references, or facts that are not "
+      .. "available from the project or the LSP. Returns titles, URLs, and short snippets. Use when accuracy "
+      .. "depends on external, up-to-date information; do not use it for anything answerable from local source. "
+      .. "Follow up with web_fetch on the most relevant result to read past the snippet.",
+    parameters = {
+      type = "object",
+      properties = { query = { type = "string", description = "Search query" } },
+      required = { "query" },
+    },
+  },
+  {
+    name = "web_fetch",
+    description = "Fetch a web page and return its readable text, for depth beyond a web_search snippet. Use "
+      .. "on a URL returned by web_search (or another page it links to) when the snippet is not enough.",
+    parameters = {
+      type = "object",
+      properties = { url = { type = "string", description = "Absolute http(s) URL" } },
+      required = { "url" },
+    },
+  },
 }
 
 local function realpath(path)
@@ -229,6 +251,137 @@ local function workspace_search(session, args, callback)
   end)
 end
 
+local function strip_tags(html)
+  local text = html:gsub("<[^>]*>", "")
+  text = text
+    :gsub("&amp;", "&")
+    :gsub("&quot;", '"')
+    :gsub("&#0?39;", "'")
+    :gsub("&#x27;", "'")
+    :gsub("&lt;", "<")
+    :gsub("&gt;", ">")
+    :gsub("&nbsp;", " ")
+  return vim.trim(text)
+end
+
+local function decode_uddg(href)
+  local encoded = href:match("uddg=([^&]+)")
+  if not encoded then
+    return href
+  end
+  encoded = encoded:gsub("+", " ")
+  encoded = encoded:gsub("%%(%x%x)", function(hex)
+    return string.char(tonumber(hex, 16))
+  end)
+  return encoded
+end
+
+local function parse_web_results(html, max_results)
+  local results = {}
+  for href, title in html:gmatch('<a[^>]-class="result__a"[^>]-href="(.-)"[^>]->(.-)</a>') do
+    results[#results + 1] = { url = decode_uddg(href), title = strip_tags(title) }
+    if #results >= max_results then
+      break
+    end
+  end
+  local index = 0
+  for snippet in html:gmatch('<a[^>]-class="result__snippet"[^>]->(.-)</a>') do
+    index = index + 1
+    if not results[index] then
+      break
+    end
+    results[index].snippet = strip_tags(snippet)
+  end
+  return results
+end
+
+local function web_search(session, args, callback)
+  if type(args.query) ~= "string" or args.query == "" then
+    callback("web_search requires a non-empty query.")
+    return
+  end
+  local command = {
+    "curl",
+    "--silent",
+    "--show-error",
+    "--connect-timeout",
+    "5",
+    "--max-time",
+    "15",
+    "--user-agent",
+    "Mozilla/5.0 (compatible; nvim-code-example)",
+    "--get",
+    "--data-urlencode",
+    "q=" .. args.query,
+    "https://html.duckduckgo.com/html/",
+  }
+  vim.system(command, { text = true }, function(result)
+    vim.schedule(function()
+      if result.code ~= 0 then
+        callback("Web search failed: " .. vim.trim(result.stderr or "unknown error"))
+        return
+      end
+      local max_results = session.opts.max_search_results or session.opts.max_tool_results
+      local results = parse_web_results(result.stdout or "", max_results)
+      if #results == 0 then
+        callback("No web results found.")
+        return
+      end
+      local lines = {}
+      for i, item in ipairs(results) do
+        lines[#lines + 1] = ("%d. %s\n   %s\n   %s"):format(i, item.title, item.url, item.snippet or "")
+      end
+      callback(table.concat(lines, "\n\n"))
+    end)
+  end)
+end
+
+local function extract_page_text(html)
+  local text = html
+  text = text:gsub("<%s*[Ss][Cc][Rr][Ii][Pp][Tt][^>]*>.-<%s*/%s*[Ss][Cc][Rr][Ii][Pp][Tt]%s*>", " ")
+  text = text:gsub("<%s*[Ss][Tt][Yy][Ll][Ee][^>]*>.-<%s*/%s*[Ss][Tt][Yy][Ll][Ee]%s*>", " ")
+  text = text:gsub("<%s*[Bb][Rr]%s*/?>", "\n")
+  text = text:gsub("<%s*/%s*[PpLlIiTtDdHh][1-6]?%s*>", "\n")
+  text = strip_tags(text)
+  text = text:gsub("[ \t]+", " ")
+  text = text:gsub(" ?\n ?", "\n")
+  text = text:gsub("\n\n\n+", "\n\n")
+  return vim.trim(text)
+end
+
+local function web_fetch(session, args, callback)
+  if type(args.url) ~= "string" or not args.url:match("^https?://") then
+    callback("web_fetch requires an absolute http(s) URL.")
+    return
+  end
+  local command = {
+    "curl",
+    "--silent",
+    "--show-error",
+    "--location",
+    "--max-redirs",
+    "5",
+    "--connect-timeout",
+    "5",
+    "--max-time",
+    "20",
+    "--user-agent",
+    "Mozilla/5.0 (compatible; nvim-code-example)",
+    "--",
+    args.url,
+  }
+  vim.system(command, { text = true }, function(result)
+    vim.schedule(function()
+      if result.code ~= 0 then
+        callback("Fetch failed: " .. vim.trim(result.stderr or "unknown error"))
+        return
+      end
+      local text = extract_page_text(result.stdout or "")
+      callback(text ~= "" and text or "No readable text extracted from the page.")
+    end)
+  end)
+end
+
 function M.schemas()
   local tools = {}
   for _, schema in ipairs(schemas) do
@@ -286,6 +439,10 @@ function M.execute(session, call, callback)
     read_source(session, args, callback)
   elseif name == "workspace_search" then
     workspace_search(session, args, callback)
+  elseif name == "web_search" then
+    web_search(session, args, callback)
+  elseif name == "web_fetch" then
+    web_fetch(session, args, callback)
   else
     callback("Unknown or disallowed tool: " .. tostring(name))
   end

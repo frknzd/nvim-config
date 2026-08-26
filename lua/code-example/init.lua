@@ -8,14 +8,16 @@ local defaults = {
   context_size = 8192,
   reasoning_budget = 512,
   reasoning_budget_message = "Conclude briefly and provide the final answer now.",
+  reasoning_effort = "low",
   max_output_tokens = nil,
   startup_timeout = 300,
   idle_timeout = 600,
   context_radius = 35,
   definition_radius = 45,
-  max_tool_rounds = 4,
-  max_tool_calls = 8,
+  max_tool_rounds = nil,
+  max_tool_calls = nil,
   max_tool_results = 40,
+  max_search_results = 8,
   max_tool_lines = 160,
   max_tool_output_chars = 6000,
 }
@@ -38,6 +40,9 @@ local function prompt(context)
   }
   if context.hover and context.hover ~= "" then
     sections[#sections + 1] = "LSP hover information:\n" .. context.hover
+  end
+  if context.diagnostics and #context.diagnostics > 0 then
+    sections[#sections + 1] = "LSP diagnostics in this range:\n" .. table.concat(context.diagnostics, "\n")
   end
   if context.selection then
     sections[#sections + 1] = ("Selected code:\n```%s\n%s\n```"):format(context.filetype, context.selection)
@@ -130,6 +135,9 @@ local function run_agent(view, url, messages, tool_session, generation, state)
   if opts.max_output_tokens then
     payload.max_tokens = opts.max_output_tokens
   end
+  if opts.reasoning_effort then
+    payload.reasoning_effort = opts.reasoning_effort
+  end
   active_cancel = require("code-example.request").start(url, payload, {
     on_chunk = function(chunk)
       if view.generation == generation then
@@ -159,7 +167,9 @@ local function run_agent(view, url, messages, tool_session, generation, state)
       end
 
       state.rounds = state.rounds + 1
-      if state.rounds > opts.max_tool_rounds or state.calls + #calls > opts.max_tool_calls then
+      local over_rounds = opts.max_tool_rounds and state.rounds > opts.max_tool_rounds
+      local over_calls = opts.max_tool_calls and state.calls + #calls > opts.max_tool_calls
+      if over_rounds or over_calls then
         fail(view, "The model exceeded the configured tool-call limit.")
         require("code-example.server").idle(opts.idle_timeout)
         return
@@ -283,7 +293,12 @@ local function generate(view, source)
           content = table.concat({
             "You are a precise coding teacher. Prefer compilable, idiomatic examples.",
             "Reason directly: identify the construct, verify the example, then answer without revisiting decisions.",
-            "Use the provided tools when LSP or source evidence would improve accuracy; do not guess APIs.",
+            "Use the provided tools when LSP, source, or web evidence would improve accuracy; do not guess APIs.",
+            "Prefer LSP and source tools for anything local to the project; use web_search only for external",
+            "documentation, API references, or facts the project cannot answer. When a search snippet is not",
+            "enough, use web_fetch on the most relevant result to read the full page. If LSP diagnostics are",
+            "reported for the code in view, account for them instead of ignoring them. If a tool call fails or",
+            "times out, do not retry it more than once; continue with whatever evidence you already have.",
           }, " "),
         },
         { role = "user", content = prompt(context) },

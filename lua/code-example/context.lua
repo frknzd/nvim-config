@@ -72,7 +72,29 @@ end
 local function current_excerpt(bufnr, cursor, radius)
   local first = math.max(0, cursor[1] - radius - 1)
   local last = math.min(vim.api.nvim_buf_line_count(bufnr), cursor[1] + radius)
-  return first + 1, table.concat(vim.api.nvim_buf_get_lines(bufnr, first, last, false), "\n")
+  return first + 1, last, table.concat(vim.api.nvim_buf_get_lines(bufnr, first, last, false), "\n")
+end
+
+local severity_names = {
+  [vim.diagnostic.severity.ERROR] = "Error",
+  [vim.diagnostic.severity.WARN] = "Warning",
+}
+
+local function collect_diagnostics(bufnr, first_line, last_line)
+  local diagnostics = vim.diagnostic.get(bufnr, { severity = { min = vim.diagnostic.severity.WARN } })
+  local results = {}
+  for _, diagnostic in ipairs(diagnostics) do
+    local line = diagnostic.lnum + 1
+    if line >= first_line and line <= last_line then
+      results[#results + 1] = ("Line %d [%s]%s: %s"):format(
+        line,
+        severity_names[diagnostic.severity] or "Diagnostic",
+        diagnostic.source and (" (%s)"):format(diagnostic.source) or "",
+        vim.trim((diagnostic.message or ""):gsub("\n", " "))
+      )
+    end
+  end
+  return results
 end
 
 function M.collect(source, opts, callback)
@@ -102,7 +124,7 @@ function M.collect(source, opts, callback)
     if pending > 0 then
       return
     end
-    local current_line, current = current_excerpt(bufnr, source.cursor, opts.context_radius)
+    local current_line, last_line, current = current_excerpt(bufnr, source.cursor, opts.context_radius)
     callback({
       symbol = symbol,
       selection = source.selection,
@@ -112,6 +134,7 @@ function M.collect(source, opts, callback)
       current = current,
       hover = hover,
       definition = definition_excerpt(definition_location(definition), opts.definition_radius),
+      diagnostics = collect_diagnostics(bufnr, current_line, last_line),
     })
   end
 

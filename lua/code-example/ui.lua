@@ -86,7 +86,7 @@ function View:render_status(message, kind)
   else
     footer = { { (" %s %s "):format(icon, message), hl } }
   end
-  vim.api.nvim_win_set_config(self.win, {
+  vim.api.nvim_win_set_config(self.thinking_win, {
     footer = footer,
     footer_pos = "left",
   })

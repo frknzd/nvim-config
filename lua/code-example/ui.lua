@@ -1,7 +1,5 @@
 local M = {}
 
-local namespace = vim.api.nvim_create_namespace("code-example-status")
-
 local icons = {
   busy = "󰔟",
   done = "󰄬",
@@ -14,7 +12,6 @@ local icons = {
 ---@field win integer
 ---@field thinking_buf integer
 ---@field thinking_win integer
----@field status_mark integer
 ---@field content string
 ---@field thinking_content string
 ---@field on_retry fun()?
@@ -65,11 +62,9 @@ function View:status(message, kind)
   end
   local icon = icons[kind] or icons.info
   local hl = kind == "error" and "DiagnosticError" or kind == "done" and "DiagnosticOk" or "DiagnosticInfo"
-  self.status_mark = vim.api.nvim_buf_set_extmark(self.buf, namespace, 0, 0, {
-    id = self.status_mark,
-    virt_text = { { (" %s %s "):format(icon, message), hl } },
-    virt_text_pos = "right_align",
-    priority = 200,
+  vim.api.nvim_win_set_config(self.win, {
+    footer = { { (" %s %s "):format(icon, message), hl } },
+    footer_pos = "right",
   })
 end
 
@@ -162,7 +157,6 @@ function M.open(title)
     thinking_win = thinking_win,
     content = "",
     thinking_content = "",
-    status_mark = nil,
   }, View)
   for _, target_buf in ipairs({ buf, thinking_buf }) do
     vim.keymap.set("n", "q", function()

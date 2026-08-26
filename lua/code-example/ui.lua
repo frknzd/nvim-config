@@ -104,7 +104,7 @@ function M.open(title)
   local width, height = dimensions()
   local buf = vim.api.nvim_create_buf(false, true)
   local thinking_buf = vim.api.nvim_create_buf(false, true)
-  local thinking_height = math.min(7, math.max(4, math.floor(height * 0.2)))
+  local thinking_height = math.floor((height - 2) / 2)
   local response_height = height - thinking_height - 2
   local row = math.max(0, math.floor((vim.o.lines - height - 2) / 2) - 1)
   local col = math.max(0, math.floor((vim.o.columns - width) / 2))

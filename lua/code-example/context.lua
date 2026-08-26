@@ -105,6 +105,7 @@ function M.collect(source, opts, callback)
     local current_line, current = current_excerpt(bufnr, source.cursor, opts.context_radius)
     callback({
       symbol = symbol,
+      selection = source.selection,
       filetype = filetype,
       filename = vim.api.nvim_buf_get_name(bufnr),
       current_line = current_line,

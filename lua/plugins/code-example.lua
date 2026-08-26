@@ -8,6 +8,7 @@ return {
         function()
           require("code-example").show()
         end,
+        mode = { "n", "x" },
         desc = "Annotated Code Example",
       },
     },

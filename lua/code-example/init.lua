@@ -19,9 +19,10 @@ local opts
 local active_cancel
 
 local function prompt(context)
+  local subject = context.selection and "the selected code" or ("`%s`"):format(context.symbol)
   local sections = {
-    ("The user wants to understand `%s` in %s. Produce a practical, accurate annotated example."):format(
-      context.symbol,
+    ("The user wants to understand %s in %s. Produce a practical, accurate annotated example."):format(
+      subject,
       context.filetype
     ),
     table.concat({
@@ -32,6 +33,9 @@ local function prompt(context)
   }
   if context.hover and context.hover ~= "" then
     sections[#sections + 1] = "LSP hover information:\n" .. context.hover
+  end
+  if context.selection then
+    sections[#sections + 1] = ("Selected code:\n```%s\n%s\n```"):format(context.filetype, context.selection)
   end
   sections[#sections + 1] = ("Current file `%s`, starting at line %d:\n```%s\n%s\n```"):format(
     context.filename,
@@ -48,6 +52,18 @@ local function prompt(context)
     )
   end
   return table.concat(sections, "\n\n")
+end
+
+local function visual_selection()
+  local mode = vim.fn.mode(1)
+  if mode ~= "v" and mode ~= "V" and mode ~= "\22" then
+    return nil
+  end
+  local ok, lines = pcall(vim.fn.getregion, vim.fn.getpos("v"), vim.fn.getpos("."), { type = mode })
+  if not ok or not lines or #lines == 0 then
+    return nil
+  end
+  return table.concat(lines, "\n")
 end
 
 local function fail(view, message)
@@ -170,13 +186,16 @@ local function generate(view, source)
 end
 
 function M.show()
+  local selection = visual_selection()
   local source = {
     bufnr = vim.api.nvim_get_current_buf(),
     winid = vim.api.nvim_get_current_win(),
     cursor = vim.api.nvim_win_get_cursor(0),
     symbol = vim.fn.expand("<cword>"),
+    selection = selection,
   }
-  local view = require("code-example.ui").open("Code Example · " .. source.symbol)
+  local title = selection and "Code Example · selection" or "Code Example · " .. source.symbol
+  local view = require("code-example.ui").open(title)
   view.on_cancel = function()
     if active_cancel then
       active_cancel()

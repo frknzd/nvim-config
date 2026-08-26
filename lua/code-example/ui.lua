@@ -68,6 +68,11 @@ end
 ---@field inner_height integer
 ---@field row integer
 ---@field col integer
+---@field width integer
+---@field applied_row integer?
+---@field applied_col integer?
+---@field applied_width integer?
+---@field resize_autocmd integer?
 ---@field on_retry fun()?
 ---@field on_cancel fun()?
 ---@field on_stop fun()?
@@ -202,24 +207,65 @@ function View:set_content(content)
 end
 
 function View:resize(response_height, thinking_height)
-  if not self:is_valid() or (self.response_height == response_height and self.thinking_height == thinking_height) then
+  if not self:is_valid() then
+    return
+  end
+  local unchanged = self.response_height == response_height
+    and self.thinking_height == thinking_height
+    and self.applied_row == self.row
+    and self.applied_col == self.col
+    and self.applied_width == self.width
+  if unchanged then
     return
   end
   self.response_height = response_height
   self.thinking_height = thinking_height
-  vim.api.nvim_win_set_height(self.win, response_height)
+  self.applied_row = self.row
+  self.applied_col = self.col
+  self.applied_width = self.width
+  vim.api.nvim_win_set_config(self.win, {
+    relative = "editor",
+    row = self.row,
+    col = self.col,
+    width = self.width,
+    height = response_height,
+  })
   vim.api.nvim_win_set_config(self.thinking_win, {
     relative = "editor",
     row = self.row + response_height + 2,
     col = self.col,
+    width = self.width,
     height = thinking_height,
   })
   vim.api.nvim_win_set_config(self.shortcuts_win, {
     relative = "editor",
     row = self.row + response_height + 2 + thinking_height + 2,
     col = self.col,
+    width = self.width,
     height = 1,
   })
+  render_shortcuts(self.shortcuts_buf, self.shortcuts_win)
+end
+
+function View:reflow()
+  if not self:is_valid() then
+    return
+  end
+  local width, height = dimensions()
+  self.width = width
+  self.row = math.max(0, math.floor((vim.o.lines - height - 2) / 2) - 1)
+  self.col = math.max(0, math.floor((vim.o.columns - width) / 2))
+  local thinking_height = math.floor((height - 2) / 2)
+  local response_height = height - thinking_height - 2
+  thinking_height = thinking_height - 3
+  self.default_response_height = response_height
+  self.default_thinking_height = thinking_height
+  self.inner_height = response_height + thinking_height
+  if self.auto_resize then
+    self:resize_for_content()
+  else
+    self:resize(response_height, thinking_height)
+  end
 end
 
 function View:resize_for_content()
@@ -254,6 +300,10 @@ end
 
 function View:close()
   self:stop_status_spinner()
+  if self.resize_autocmd then
+    pcall(vim.api.nvim_del_autocmd, self.resize_autocmd)
+    self.resize_autocmd = nil
+  end
   if self.on_cancel then
     self.on_cancel()
   end
@@ -362,7 +412,16 @@ function M.open(title)
     inner_height = response_height + thinking_height,
     row = row,
     col = col,
+    width = width,
+    applied_row = row,
+    applied_col = col,
+    applied_width = width,
   }, View)
+  view.resize_autocmd = vim.api.nvim_create_autocmd("VimResized", {
+    callback = function()
+      view:reflow()
+    end,
+  })
   for _, target_buf in ipairs({ buf, thinking_buf }) do
     vim.keymap.set("n", "q", function()
       view:close()

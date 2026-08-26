@@ -119,9 +119,145 @@ local function tool_label(call)
   return ("### Tool call: `%s`\n\nArguments: `%s`"):format(fn.name or "unknown", arguments)
 end
 
+local function estimate_tokens(str)
+  if type(str) ~= "string" or str == "" then
+    return 0
+  end
+  return math.ceil(#str / 4)
+end
+
+local function message_tokens(message)
+  local total = 8
+  total = total + estimate_tokens(message.content)
+  total = total + estimate_tokens(message.reasoning_content)
+  if message.tool_calls then
+    for _, call in ipairs(message.tool_calls) do
+      local ok, encoded = pcall(vim.json.encode, call)
+      total = total + estimate_tokens(ok and encoded or nil)
+    end
+  end
+  return total
+end
+
+local function messages_tokens(messages)
+  local total = 0
+  for _, message in ipairs(messages) do
+    total = total + message_tokens(message)
+  end
+  return total
+end
+
+local cached_tools_tokens
+local function tools_tokens()
+  if not cached_tools_tokens then
+    local ok, encoded = pcall(vim.json.encode, require("code-example.tools").schemas())
+    cached_tools_tokens = estimate_tokens(ok and encoded or nil)
+  end
+  return cached_tools_tokens
+end
+
+local function prompt_budget()
+  local reserved = (opts.max_output_tokens or 1024) + (opts.reasoning_budget or 0) + 256
+  return math.max(512, opts.context_size - reserved)
+end
+
+-- Removes the oldest assistant/tool-result round (messages[3] onward), returning a
+-- short note per dropped tool call so the model keeps a trace of what it already tried.
+local function compact_round(messages)
+  if #messages <= 2 then
+    return nil
+  end
+  local assistant_index = 3
+  local assistant = messages[assistant_index]
+  if not assistant or assistant.role ~= "assistant" then
+    return nil
+  end
+  local notes = {}
+  for _, call in ipairs(assistant.tool_calls or {}) do
+    notes[#notes + 1] = { id = call.id, name = call["function"] and call["function"].name or "tool" }
+  end
+  local remove_count = 1
+  local index = assistant_index + 1
+  while messages[index] and messages[index].role == "tool" do
+    for _, note in ipairs(notes) do
+      if note.id == messages[index].tool_call_id then
+        note.result = messages[index].content
+      end
+    end
+    remove_count = remove_count + 1
+    index = index + 1
+  end
+  for _ = 1, remove_count do
+    table.remove(messages, assistant_index)
+  end
+  return notes
+end
+
+local function summarize_round(notes)
+  local lines = {}
+  for _, note in ipairs(notes) do
+    local result = (note.result or ""):gsub("%s+", " ")
+    if #result > 160 then
+      result = result:sub(1, 157) .. "…"
+    end
+    lines[#lines + 1] = ("- %s: %s"):format(note.name, result)
+  end
+  return lines
+end
+
+local function apply_compaction(messages, state)
+  if #state.compaction_notes == 0 then
+    return
+  end
+  messages[2].content = state.original_user_content
+    .. "\n\nEarlier tool findings, condensed to fit the context window:\n"
+    .. table.concat(state.compaction_notes, "\n")
+end
+
+-- Drops the oldest tool rounds until the estimated prompt fits the model's context window.
+local function compact_to_budget(messages, state)
+  local budget = prompt_budget()
+  local changed = false
+  local guard = 0
+  while messages_tokens(messages) + tools_tokens() > budget and #messages > 2 and guard < 50 do
+    guard = guard + 1
+    local notes = compact_round(messages)
+    if not notes then
+      break
+    end
+    vim.list_extend(state.compaction_notes, summarize_round(notes))
+    changed = true
+  end
+  if changed then
+    apply_compaction(messages, state)
+  end
+  return changed
+end
+
+-- Unconditionally drops every tool round, for a last-ditch retry after the model already
+-- exhausted the context without producing an answer.
+local function compact_all_rounds(messages, state)
+  local changed = false
+  while true do
+    local notes = compact_round(messages)
+    if not notes then
+      break
+    end
+    vim.list_extend(state.compaction_notes, summarize_round(notes))
+    changed = true
+  end
+  if changed then
+    apply_compaction(messages, state)
+  end
+  return changed
+end
+
 local function run_agent(view, url, messages, tool_session, generation, state)
   if not view:is_valid() or view.generation ~= generation then
     return
+  end
+  if compact_to_budget(messages, state) then
+    view:append_thinking("\n\n_Context nearing the limit — condensed earlier tool results to keep going…_\n")
   end
   view:status("", "busy", true)
   local payload = {
@@ -156,6 +292,18 @@ local function run_agent(view, url, messages, tool_session, generation, state)
       end
       local calls = result.tool_calls or {}
       if #calls == 0 then
+        local exhausted = result.finish_reason == "length" and result.content == ""
+        if exhausted and not state.length_retry_used and #messages > 2 then
+          state.length_retry_used = true
+          if compact_all_rounds(messages, state) then
+            view:append_thinking(
+              "\n\n_Ran out of context before answering — condensing tool history and retrying…_\n"
+            )
+            view:status("Retrying with condensed context", "busy")
+            run_agent(view, url, messages, tool_session, generation, state)
+            return
+          end
+        end
         require("code-example.server").idle(opts.idle_timeout)
         view:status("Complete", "done")
         if view.content == "" then
@@ -304,7 +452,12 @@ local function generate(view, source)
         { role = "user", content = prompt(context) },
       }
       local tool_session = require("code-example.tools").new(source, context, opts)
-      run_agent(view, url, messages, tool_session, generation, { rounds = 0, calls = 0 })
+      run_agent(view, url, messages, tool_session, generation, {
+        rounds = 0,
+        calls = 0,
+        compaction_notes = {},
+        original_user_content = messages[2].content,
+      })
     end)
   end)
 end

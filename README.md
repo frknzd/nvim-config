@@ -16,3 +16,8 @@ The first request downloads the configured Qwen3.5-4B GGUF (about 2.8 GB) into l
 the server it starts, stops it after ten idle minutes or when Neovim exits, and never stops a server configured via
 the `endpoint` option. Use `:CodeExampleStop` to stop it manually; inside the float, press `r` to regenerate or `q`
 to close and cancel the active request.
+
+The model can inspect code through bounded tools for LSP hover, definitions, references, type definitions,
+implementations, and workspace symbols, plus literal workspace search and source reading. Source reads are limited to
+the project or files returned by the LSP, search results and line ranges are capped, and no arbitrary shell tool is
+exposed. Tool calls and abbreviated results appear in the Model Activity pane.

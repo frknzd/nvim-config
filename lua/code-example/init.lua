@@ -123,11 +123,14 @@ local function estimate_tokens(str)
   if type(str) ~= "string" or str == "" then
     return 0
   end
-  return math.ceil(#str / 4)
+  -- Deliberately pessimistic: URL- and code-heavy tool output tokenizes worse than prose,
+  -- and undercounting here is what lets a request past compaction still overflow the
+  -- server's context window and come back as a 400.
+  return math.ceil(#str / 3)
 end
 
 local function message_tokens(message)
-  local total = 8
+  local total = 24
   total = total + estimate_tokens(message.content)
   total = total + estimate_tokens(message.reasoning_content)
   if message.tool_calls then
@@ -157,7 +160,7 @@ local function tools_tokens()
 end
 
 local function prompt_budget()
-  local reserved = (opts.max_output_tokens or 1024) + (opts.reasoning_budget or 0) + 256
+  local reserved = (opts.max_output_tokens or 1024) + (opts.reasoning_budget or 0) + 512
   return math.max(512, opts.context_size - reserved)
 end
 
@@ -372,10 +375,22 @@ local function run_agent(view, url, messages, tool_session, generation, state)
     end,
     on_error = function(request_err)
       active_cancel = nil
-      require("code-example.server").idle(opts.idle_timeout)
-      if view:is_valid() and view.generation == generation then
-        fail(view, request_err)
+      if not view:is_valid() or view.generation ~= generation then
+        return
       end
+      if not state.error_retry_used and #messages > 2 then
+        state.error_retry_used = true
+        if compact_all_rounds(messages, state) then
+          view:append_thinking(
+            ("\n\n_Request failed (%s) — condensing tool history and retrying…_\n"):format(request_err)
+          )
+          view:status("Retrying with condensed context", "busy")
+          run_agent(view, url, messages, tool_session, generation, state)
+          return
+        end
+      end
+      require("code-example.server").idle(opts.idle_timeout)
+      fail(view, request_err)
     end,
   })
 end

@@ -283,8 +283,7 @@ function M.show()
     symbol = vim.fn.expand("<cword>"),
     selection = selection,
   }
-  local title = selection and "Code Example · selection" or "Code Example · " .. source.symbol
-  local view = require("code-example.ui").open(title)
+  local view = require("code-example.ui").open("Usage")
   view.on_cancel = function()
     if active_cancel then
       active_cancel()

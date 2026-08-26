@@ -185,7 +185,7 @@ function M.open(title)
     height = thinking_height,
     style = "minimal",
     border = "rounded",
-    title = " Model activity ",
+    title = " Model Insight ",
     title_pos = "center",
   })
 

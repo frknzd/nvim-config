@@ -7,6 +7,16 @@ local icons = {
   info = "󰋼",
 }
 
+local activity_words = {
+  { "Rummaging", "Function" },
+  { "Scrying", "Special" },
+  { "Unspooling", "String" },
+  { "Triangulating", "Type" },
+  { "Percolating", "Identifier" },
+  { "Ferreting", "DiagnosticInfo" },
+  { "Gloaming", "Number" },
+}
+
 ---@class CodeExampleView
 ---@field buf integer
 ---@field win integer
@@ -14,6 +24,9 @@ local icons = {
 ---@field thinking_win integer
 ---@field content string
 ---@field thinking_content string
+---@field status_message string
+---@field status_index integer
+---@field status_timer uv.uv_timer_t?
 ---@field on_retry fun()?
 ---@field on_cancel fun()?
 
@@ -58,16 +71,60 @@ function View:append_thinking(content)
   self:set_thinking(combined)
 end
 
-function View:status(message, kind)
+function View:render_status(message, kind)
   if not self:is_valid() then
     return
   end
   local icon = icons[kind] or icons.info
   local hl = kind == "error" and "DiagnosticError" or kind == "done" and "DiagnosticOk" or "DiagnosticInfo"
+  local footer
+  if kind == "busy" then
+    local activity = activity_words[self.status_index]
+    footer = {
+      { (" %s "):format(activity[1]), activity[2] },
+      { ("· %s "):format(message), "Comment" },
+    }
+  else
+    footer = { { (" %s %s "):format(icon, message), hl } }
+  end
   vim.api.nvim_win_set_config(self.win, {
-    footer = { { (" %s %s "):format(icon, message), hl } },
-    footer_pos = "right",
+    footer = footer,
+    footer_pos = "left",
   })
+end
+
+function View:stop_status_animation()
+  if self.status_timer then
+    self.status_timer:stop()
+    self.status_timer:close()
+    self.status_timer = nil
+  end
+end
+
+function View:status(message, kind)
+  if not self:is_valid() then
+    return
+  end
+  self.status_message = message
+  if kind ~= "busy" then
+    self:stop_status_animation()
+    self:render_status(message, kind)
+    return
+  end
+  self.status_index = self.status_index or 1
+  self:render_status(message, kind)
+  if self.status_timer then
+    return
+  end
+  self.status_timer = vim.uv.new_timer()
+  self.status_timer:start(500, 500, vim.schedule_wrap(function()
+    if not self:is_valid() then
+      self:stop_status_animation()
+      return
+    end
+    self.status_index = self.status_index % #activity_words + 1
+    self:render_status(self.status_message, "busy")
+  end))
 end
 
 function View:set_content(content)
@@ -89,6 +146,7 @@ function View:append(content)
 end
 
 function View:close()
+  self:stop_status_animation()
   if self.on_cancel then
     self.on_cancel()
   end
@@ -159,6 +217,9 @@ function M.open(title)
     thinking_win = thinking_win,
     content = "",
     thinking_content = "",
+    status_message = "",
+    status_index = 1,
+    status_timer = nil,
   }, View)
   for _, target_buf in ipairs({ buf, thinking_buf }) do
     vim.keymap.set("n", "q", function()

@@ -111,7 +111,7 @@ local function tool_label(call)
   if #arguments > 240 then
     arguments = arguments:sub(1, 237) .. "…"
   end
-  return ("🔧 `%s` %s"):format(fn.name or "unknown", arguments)
+  return ("### Tool call: `%s`\n\nArguments: `%s`"):format(fn.name or "unknown", arguments)
 end
 
 local function run_agent(view, url, messages, tool_session, generation, state)
@@ -187,6 +187,8 @@ local function run_agent(view, url, messages, tool_session, generation, state)
           return
         end
         call.id = call.id or ("code_example_tool_%d_%d"):format(state.rounds, index)
+        local tool_name = call["function"] and call["function"].name or "unknown"
+        view:status("Tool · " .. tool_name, "busy")
         view:append_thinking("\n\n" .. tool_label(call) .. "\n")
         require("code-example.tools").execute(tool_session, call, function(tool_result)
           if not view:is_valid() or view.generation ~= generation then
@@ -197,7 +199,7 @@ local function run_agent(view, url, messages, tool_session, generation, state)
             tool_result = tool_result:sub(1, opts.max_tool_output_chars - 20) .. "\n…result truncated…"
           end
           local preview = #tool_result > 700 and tool_result:sub(1, 697) .. "…" or tool_result
-          view:append_thinking("\n" .. preview .. "\n")
+          view:append_thinking("\n\nTool result:\n\n" .. preview .. "\n")
           messages[#messages + 1] = {
             role = "tool",
             tool_call_id = call.id,

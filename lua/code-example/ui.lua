@@ -17,6 +17,8 @@ local activity_words = {
   { "Gloaming", "Number" },
 }
 
+local spinner_frames = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
+
 ---@class CodeExampleView
 ---@field buf integer
 ---@field win integer
@@ -26,6 +28,9 @@ local activity_words = {
 ---@field thinking_content string
 ---@field status_message string
 ---@field status_index integer
+---@field spinner_index integer
+---@field status_timer uv.uv_timer_t?
+---@field status_tool string?
 ---@field on_retry fun()?
 ---@field on_cancel fun()?
 
@@ -79,9 +84,18 @@ function View:render_status(message, kind)
   local footer
   if kind == "busy" then
     local activity = activity_words[math.max(1, self.status_index)]
+    local spinner = spinner_frames[self.spinner_index]
+    local left_width = 3 + vim.fn.strdisplaywidth(activity[1])
+    local right = self.status_tool and (" Calling %s "):format(self.status_tool)
+      or (message ~= "" and (" %s "):format(message) or "")
+    local width = vim.api.nvim_win_get_width(self.thinking_win)
+    local padding = right ~= "" and string.rep(" ", math.max(1, width - left_width - vim.fn.strdisplaywidth(right) - 2))
+      or ""
     footer = {
-      { (" %s "):format(activity[1]), activity[2] },
-      { ("· %s "):format(message), "Comment" },
+      { (" %s "):format(spinner), "DiagnosticInfo" },
+      { ("%s "):format(activity[1]), activity[2] },
+      { padding, "Comment" },
+      { right, self.status_tool and "Function" or "Comment" },
     }
   else
     footer = { { (" %s %s "):format(icon, message), hl } }
@@ -92,15 +106,40 @@ function View:render_status(message, kind)
   })
 end
 
-function View:status(message, kind, cycle)
+function View:stop_status_spinner()
+  if self.status_timer then
+    self.status_timer:stop()
+    self.status_timer:close()
+    self.status_timer = nil
+  end
+end
+
+function View:status(message, kind, cycle, tool_name)
   if not self:is_valid() then
     return
   end
   self.status_message = message
+  self.status_tool = tool_name
   if kind == "busy" and cycle then
     self.status_index = self.status_index % #activity_words + 1
   end
   self:render_status(message, kind)
+  if kind ~= "busy" then
+    self:stop_status_spinner()
+    return
+  end
+  if self.status_timer then
+    return
+  end
+  self.status_timer = vim.uv.new_timer()
+  self.status_timer:start(80, 80, vim.schedule_wrap(function()
+    if not self:is_valid() then
+      self:stop_status_spinner()
+      return
+    end
+    self.spinner_index = self.spinner_index % #spinner_frames + 1
+    self:render_status(self.status_message, "busy")
+  end))
 end
 
 function View:set_content(content)
@@ -122,6 +161,7 @@ function View:append(content)
 end
 
 function View:close()
+  self:stop_status_spinner()
   if self.on_cancel then
     self.on_cancel()
   end
@@ -194,6 +234,9 @@ function M.open(title)
     thinking_content = "",
     status_message = "",
     status_index = 1,
+    spinner_index = 1,
+    status_timer = nil,
+    status_tool = nil,
   }, View)
   for _, target_buf in ipairs({ buf, thinking_buf }) do
     vim.keymap.set("n", "q", function()

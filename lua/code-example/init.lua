@@ -118,14 +118,14 @@ local function run_agent(view, url, messages, tool_session, generation, state)
   if not view:is_valid() or view.generation ~= generation then
     return
   end
-  view:status("New model response", "busy", true)
+  view:status("", "busy", true)
   local payload = {
     model = opts.model,
     stream = true,
     temperature = 0.2,
     messages = messages,
     tools = require("code-example.tools").schemas(),
-    tool_choice = "auto",
+    tool_choice = state.rounds == 0 and "required" or "auto",
   }
   if opts.max_output_tokens then
     payload.max_tokens = opts.max_output_tokens
@@ -189,7 +189,7 @@ local function run_agent(view, url, messages, tool_session, generation, state)
         end
         call.id = call.id or ("code_example_tool_%d_%d"):format(state.rounds, index)
         local tool_name = call["function"] and call["function"].name or "unknown"
-        view:status("Calling " .. tool_name, "busy", true)
+        view:status("", "busy", true, tool_name)
         view:append_thinking("\n\n" .. tool_label(call) .. "\n")
         require("code-example.tools").execute(tool_session, call, function(tool_result)
           if not view:is_valid() or view.generation ~= generation then

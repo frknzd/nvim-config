@@ -21,8 +21,10 @@ local View = {}
 View.__index = View
 
 local function dimensions()
-  local width = math.min(100, math.max(50, math.floor(vim.o.columns * 0.72)))
-  local height = math.min(34, math.max(12, math.floor(vim.o.lines * 0.68)))
+  local available_width = math.max(30, vim.o.columns - 4)
+  local available_height = math.max(10, vim.o.lines - 6)
+  local width = math.min(140, available_width, math.max(50, math.floor(vim.o.columns * 0.88)))
+  local height = math.min(48, available_height, math.max(14, math.floor(vim.o.lines * 0.8)))
   return width, height
 end
 
@@ -104,7 +106,7 @@ function M.open(title)
   local thinking_buf = vim.api.nvim_create_buf(false, true)
   local thinking_height = math.min(7, math.max(4, math.floor(height * 0.2)))
   local response_height = height - thinking_height - 2
-  local row = math.max(0, math.floor((vim.o.lines - height) / 2) - 1)
+  local row = math.max(0, math.floor((vim.o.lines - height - 2) / 2) - 1)
   local col = math.max(0, math.floor((vim.o.columns - width) / 2))
   local win = vim.api.nvim_open_win(buf, true, {
     relative = "editor",

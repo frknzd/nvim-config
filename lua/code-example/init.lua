@@ -3,10 +3,10 @@ local M = {}
 local defaults = {
   command = nil,
   endpoint = nil,
-  model = "unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL",
-  model_size_gb = 2.78,
-  context_size = 8192,
-  reasoning_budget = 512,
+  model = "unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL",
+  model_size_gb = 5.97,
+  context_size = 32768,
+  reasoning_budget = 1024,
   reasoning_budget_message = "Conclude briefly and provide the final answer now.",
   reasoning_effort = "low",
   max_output_tokens = nil,
@@ -28,14 +28,15 @@ local active_cancel
 local function prompt(context)
   local subject = context.selection and "the selected code" or ("`%s`"):format(context.symbol)
   local sections = {
-    ("The user wants to understand %s in %s. Produce a practical, accurate annotated example."):format(
-      subject,
-      context.filetype
-    ),
+    ("The user wants to understand %s in %s. Judge whether it's a reusable construct worth a usage example, "
+      .. "or an orchestration/entry-point function better explained in place — see the framing guidance in "
+      .. "your instructions."):format(subject, context.filetype),
     table.concat({
       "Return Markdown only. Start with a one-sentence identification of the construct, then one fenced code",
-      "example in the correct language. Annotate important lines using short comments inside the code. Follow with",
-      "at most four concise notes. Do not invent APIs; mention uncertainty explicitly.",
+      "block: a usage example if it's reusable, or an annotated excerpt of the construct itself if it's a",
+      "wiring/entry-point function with no example worth inventing. Annotate important lines with short",
+      "comments. Follow with at most four concise notes. Do not invent APIs or call sites; mention",
+      "uncertainty explicitly.",
     }, " "),
   }
   if context.hover and context.hover ~= "" then
@@ -456,6 +457,13 @@ local function generate(view, source)
           content = table.concat({
             "You are a precise coding teacher. Prefer compilable, idiomatic examples.",
             "Reason directly: identify the construct, verify the example, then answer without revisiting decisions.",
+            "Not every symbol deserves a canonical usage example. A local pure helper or a function meant to be",
+            "reused as a library call should get a real usage example grounded in how it is actually called",
+            "elsewhere; use lsp_references if the call pattern is not already clear from the given context. A",
+            "global function that wires systems together, is invoked from one place, or exists as an entry point",
+            "rather than to be reused should instead be explained in place: what it does, its inputs/outputs, and",
+            "how it connects the surrounding pieces — do not invent a hypothetical call site for it just to fill",
+            "the example slot.",
             "Use the provided tools when LSP, source, or web evidence would improve accuracy; do not guess APIs.",
             "Prefer LSP and source tools for anything local to the project; use web_search only for external",
             "documentation, API references, or facts the project cannot answer. When a search snippet is not",

@@ -99,9 +99,13 @@ local function generate(view, source)
       return
     end
     show_server_log(view, "Starting local model")
+    local awaiting_server = true
     require("code-example.server").ensure(opts, function(status, lines)
-      show_server_log(view, status, lines)
+      if awaiting_server and view.generation == generation then
+        show_server_log(view, status, lines)
+      end
     end, function(url, server_err)
+      awaiting_server = false
       if not view:is_valid() or view.generation ~= generation then
         return
       end

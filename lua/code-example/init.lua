@@ -53,7 +53,36 @@ local function fail(view, message)
   vim.notify(message, vim.log.levels.WARN, { title = "Code Example" })
 end
 
+local function show_server_log(view, status, lines)
+  if not view:is_valid() then
+    return
+  end
+  view:status(status, "busy")
+  local content = {
+    "# Starting local model",
+    "",
+    ("Model: `%s`"):format(opts.model),
+    "",
+    "Recent llama.cpp output:",
+    "",
+  }
+  if not lines or #lines == 0 then
+    content[#content + 1] = "    Waiting for llama.cpp output…"
+  else
+    local first = math.max(1, #lines - 29)
+    for index = first, #lines do
+      content[#content + 1] = "    " .. lines[index]
+    end
+  end
+  content[#content + 1] = ""
+  content[#content + 1] = "Press `q` to close or `r` to restart."
+  view:set_content(table.concat(content, "\n"))
+  vim.api.nvim_win_set_cursor(view.win, { vim.api.nvim_buf_line_count(view.buf), 0 })
+end
+
 local function generate(view, source)
+  view.generation = (view.generation or 0) + 1
+  local generation = view.generation
   if active_cancel then
     active_cancel()
     active_cancel = nil
@@ -61,20 +90,18 @@ local function generate(view, source)
   view:set_content("Preparing context…\n\nPress `q` to close or `r` to regenerate.")
   view:status("Inspecting LSP context", "busy")
   require("code-example.context").collect(source, opts, function(context, err)
-    if not view:is_valid() then
+    if not view:is_valid() or view.generation ~= generation then
       return
     end
     if err then
       fail(view, err)
       return
     end
-    view:status("Starting local model", "busy")
-    require("code-example.server").ensure(opts, function(status)
-      if view:is_valid() then
-        view:status(status, "busy")
-      end
+    show_server_log(view, "Starting local model")
+    require("code-example.server").ensure(opts, function(status, lines)
+      show_server_log(view, status, lines)
     end, function(url, server_err)
-      if not view:is_valid() then
+      if not view:is_valid() or view.generation ~= generation then
         return
       end
       if server_err then
@@ -127,6 +154,9 @@ function M.show()
     if active_cancel then
       active_cancel()
       active_cancel = nil
+    end
+    if require("code-example.server").is_starting() then
+      require("code-example.server").stop()
     end
     require("code-example.server").idle(opts.idle_timeout)
   end

@@ -68,18 +68,27 @@ local function append_log(data, on_status)
   if not data or data == "" then
     return
   end
+  data = data:gsub("\27%[[%d;?]*[ -/]*[@-~]", ""):gsub("\r\n", "\n"):gsub("\r", "\n")
+  local status = "Starting llama.cpp"
   for _, line in ipairs(vim.split(data, "\n", { trimempty = true })) do
-    state.log[#state.log + 1] = line
-    if #state.log > 40 then
-      table.remove(state.log, 1)
-    end
-    local progress = line:match("(%d+%%)")
-    if progress then
-      vim.schedule(function()
-        on_status("Downloading model " .. progress)
-      end)
+    line = vim.trim(line)
+    if line ~= "" then
+      state.log[#state.log + 1] = line
+      if #state.log > 80 then
+        table.remove(state.log, 1)
+      end
+      local progress = line:match("(%d+%%)")
+      if progress then
+        status = "Downloading model " .. progress
+      elseif line:lower():match("load.+model") then
+        status = "Loading model"
+      end
     end
   end
+  local snapshot = vim.deepcopy(state.log)
+  vim.schedule(function()
+    on_status(status, snapshot)
+  end)
 end
 
 local function poll_ready(url, opts, on_status, started_at)
@@ -148,7 +157,6 @@ function M.ensure(opts, on_status, callback)
   state.starting = true
   state.waiters[#state.waiters + 1] = callback
   state.log = {}
-  on_status("Starting llama.cpp")
 
   local args = { command }
   if command:match("/llama$") or command == "llama" then
@@ -164,6 +172,8 @@ function M.ensure(opts, on_status, callback)
     "-c",
     tostring(opts.context_size),
   })
+  state.log[1] = "$ " .. table.concat(args, " ")
+  on_status("Starting llama.cpp", vim.deepcopy(state.log))
 
   state.owned = true
   state.process = vim.system(args, {
@@ -211,6 +221,10 @@ end
 
 function M.logs()
   return vim.deepcopy(state.log)
+end
+
+function M.is_starting()
+  return state.starting
 end
 
 return M

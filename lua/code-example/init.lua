@@ -284,7 +284,7 @@ function M.show()
     symbol = vim.fn.expand("<cword>"),
     selection = selection,
   }
-  local view = require("code-example.ui").open("Usage")
+  local view = require("code-example.ui").open("+== CodeExample ==+")
   view.on_cancel = function()
     if active_cancel then
       active_cancel()

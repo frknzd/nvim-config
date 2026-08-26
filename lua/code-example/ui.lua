@@ -82,16 +82,25 @@ function View:render_status(message, kind)
   local icon = icons[kind] or icons.info
   local hl = kind == "error" and "DiagnosticError" or kind == "done" and "DiagnosticOk" or "DiagnosticInfo"
   local footer
+  local footer_pos = "left"
   if kind == "busy" then
     local activity = activity_words[math.max(1, self.status_index)]
     local spinner = spinner_frames[self.spinner_index]
-    local left_width = 3 + vim.fn.strdisplaywidth(activity[1])
-    local right = self.status_tool and (" Calling %s "):format(self.status_tool)
-      or (message ~= "" and (" %s "):format(message) or "")
+    local activity_width = 3 + vim.fn.strdisplaywidth(activity[1])
+    local right = self.status_tool and (" Calling %s "):format(self.status_tool) or ""
     local width = vim.api.nvim_win_get_width(self.thinking_win)
-    local padding = right ~= "" and string.rep(" ", math.max(1, width - left_width - vim.fn.strdisplaywidth(right) - 2))
-      or ""
+    local prefix = ""
+    local padding = ""
+    if right == "" then
+      footer_pos = "center"
+    else
+      local prefix_width = math.max(0, math.floor((width - activity_width) / 2))
+      prefix = string.rep(" ", prefix_width)
+      local used = prefix_width + activity_width
+      padding = string.rep(" ", math.max(1, width - used - vim.fn.strdisplaywidth(right) - 2))
+    end
     footer = {
+      { prefix, "Comment" },
       { (" %s "):format(spinner), "DiagnosticInfo" },
       { ("%s "):format(activity[1]), activity[2] },
       { padding, "Comment" },
@@ -102,7 +111,7 @@ function View:render_status(message, kind)
   end
   vim.api.nvim_win_set_config(self.thinking_win, {
     footer = footer,
-    footer_pos = "left",
+    footer_pos = footer_pos,
   })
 end
 

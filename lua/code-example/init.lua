@@ -222,6 +222,23 @@ local function run_agent(view, url, messages, tool_session, generation, state)
   })
 end
 
+local function stop_generation(view)
+  if not active_cancel then
+    return
+  end
+  view.generation = (view.generation or 0) + 1
+  active_cancel()
+  active_cancel = nil
+  require("code-example.server").idle(opts.idle_timeout)
+  if not view:is_valid() then
+    return
+  end
+  view:status("Stopped", "stopped")
+  if view.content == "" then
+    view:set_content("_Stopped before producing a response. Press `r` to resend or `q` to close._")
+  end
+end
+
 local function generate(view, source)
   view.generation = (view.generation or 0) + 1
   local generation = view.generation
@@ -229,6 +246,7 @@ local function generate(view, source)
     active_cancel()
     active_cancel = nil
   end
+  view:set_auto_resize(false)
   view:set_content("Preparing context…\n\nPress `q` to close or `r` to regenerate.")
   view:set_thinking("Waiting for LSP context…")
   view:status("Inspecting LSP context", "busy")
@@ -255,8 +273,9 @@ local function generate(view, source)
         fail(view, server_err)
         return
       end
+      view:set_auto_resize(true)
       view:set_content("")
-      view:set_thinking("Thinking…\n\n")
+      view:set_thinking("")
       view:status("Generating", "busy")
       local messages = {
         {
@@ -297,6 +316,9 @@ function M.show()
   end
   view.on_retry = function()
     generate(view, source)
+  end
+  view.on_stop = function()
+    stop_generation(view)
   end
   generate(view, source)
 end

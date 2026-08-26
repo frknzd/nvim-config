@@ -19,11 +19,40 @@ local activity_words = {
 
 local spinner_frames = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
 
+local shortcuts_ns = vim.api.nvim_create_namespace("code_example_shortcuts")
+local shortcuts_items = {
+  { key = "q", label = "close" },
+  { key = "r", label = "resend" },
+  { key = "s", label = "stop" },
+}
+
+local function render_shortcuts(bufnr, win)
+  local parts = {}
+  for _, item in ipairs(shortcuts_items) do
+    parts[#parts + 1] = item.key .. " " .. item.label
+  end
+  local text = table.concat(parts, "    ")
+  local width = vim.api.nvim_win_get_width(win)
+  local pad = math.max(0, math.floor((width - vim.fn.strdisplaywidth(text)) / 2))
+  local line = string.rep(" ", pad) .. text
+  vim.bo[bufnr].modifiable = true
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { line })
+  vim.bo[bufnr].modifiable = false
+  vim.api.nvim_buf_clear_namespace(bufnr, shortcuts_ns, 0, -1)
+  local pos = pad
+  for _, item in ipairs(shortcuts_items) do
+    vim.api.nvim_buf_add_highlight(bufnr, shortcuts_ns, "Title", 0, pos, pos + #item.key)
+    pos = pos + #item.key + 1 + #item.label + 4
+  end
+end
+
 ---@class CodeExampleView
 ---@field buf integer
 ---@field win integer
 ---@field thinking_buf integer
 ---@field thinking_win integer
+---@field shortcuts_buf integer
+---@field shortcuts_win integer
 ---@field content string
 ---@field thinking_content string
 ---@field status_message string
@@ -31,8 +60,17 @@ local spinner_frames = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧",
 ---@field spinner_index integer
 ---@field status_timer uv.uv_timer_t?
 ---@field status_tool string?
+---@field auto_resize boolean
+---@field response_height integer
+---@field thinking_height integer
+---@field default_response_height integer
+---@field default_thinking_height integer
+---@field inner_height integer
+---@field row integer
+---@field col integer
 ---@field on_retry fun()?
 ---@field on_cancel fun()?
+---@field on_stop fun()?
 
 local View = {}
 View.__index = View
@@ -82,7 +120,7 @@ function View:render_status(message, kind)
   local icon = icons[kind] or icons.info
   local hl = kind == "error" and "DiagnosticError" or kind == "done" and "DiagnosticOk" or "DiagnosticInfo"
   local footer
-  local footer_pos = "left"
+  local footer_pos = kind == "stopped" and "center" or "left"
   if kind == "busy" then
     local activity = activity_words[math.max(1, self.status_index)]
     local spinner = spinner_frames[self.spinner_index]
@@ -160,6 +198,51 @@ function View:set_content(content)
   vim.bo[self.buf].modifiable = true
   vim.api.nvim_buf_set_lines(self.buf, 0, -1, false, lines)
   vim.bo[self.buf].modifiable = false
+  self:resize_for_content()
+end
+
+function View:resize(response_height, thinking_height)
+  if not self:is_valid() or (self.response_height == response_height and self.thinking_height == thinking_height) then
+    return
+  end
+  self.response_height = response_height
+  self.thinking_height = thinking_height
+  vim.api.nvim_win_set_height(self.win, response_height)
+  vim.api.nvim_win_set_config(self.thinking_win, {
+    relative = "editor",
+    row = self.row + response_height + 2,
+    col = self.col,
+    height = thinking_height,
+  })
+  vim.api.nvim_win_set_config(self.shortcuts_win, {
+    relative = "editor",
+    row = self.row + response_height + 2 + thinking_height + 2,
+    col = self.col,
+    height = 1,
+  })
+end
+
+function View:resize_for_content()
+  if not self.auto_resize or not self:is_valid() then
+    return
+  end
+  local ok, measured = pcall(vim.api.nvim_win_text_height, self.win, { start_row = 0, end_row = -1 })
+  local required = ok and measured.all or vim.api.nvim_buf_line_count(self.buf)
+  local max_response_height = self.inner_height - 1
+  local response_height = math.min(max_response_height, math.max(self.default_response_height, required + 1))
+  self:resize(response_height, self.inner_height - response_height)
+  if required + 1 > max_response_height then
+    vim.api.nvim_win_set_cursor(self.win, { vim.api.nvim_buf_line_count(self.buf), 0 })
+  end
+end
+
+function View:set_auto_resize(enabled)
+  self.auto_resize = enabled
+  if enabled then
+    self:resize_for_content()
+  else
+    self:resize(self.default_response_height, self.default_thinking_height)
+  end
 end
 
 function View:append(content)
@@ -180,14 +263,19 @@ function View:close()
   if vim.api.nvim_win_is_valid(self.thinking_win) then
     vim.api.nvim_win_close(self.thinking_win, true)
   end
+  if vim.api.nvim_win_is_valid(self.shortcuts_win) then
+    vim.api.nvim_win_close(self.shortcuts_win, true)
+  end
 end
 
 function M.open(title)
   local width, height = dimensions()
   local buf = vim.api.nvim_create_buf(false, true)
   local thinking_buf = vim.api.nvim_create_buf(false, true)
+  local shortcuts_buf = vim.api.nvim_create_buf(false, true)
   local thinking_height = math.floor((height - 2) / 2)
   local response_height = height - thinking_height - 2
+  thinking_height = thinking_height - 3
   local row = math.max(0, math.floor((vim.o.lines - height - 2) / 2) - 1)
   local col = math.max(0, math.floor((vim.o.columns - width) / 2))
   local win = vim.api.nvim_open_win(buf, true, {
@@ -212,6 +300,16 @@ function M.open(title)
     title = " Model Insight ",
     title_pos = "center",
   })
+  local shortcuts_win = vim.api.nvim_open_win(shortcuts_buf, false, {
+    relative = "editor",
+    row = row + response_height + 2 + thinking_height + 2,
+    col = col,
+    width = width,
+    height = 1,
+    style = "minimal",
+    border = "rounded",
+    focusable = false,
+  })
 
   vim.bo[buf].buftype = "nofile"
   vim.bo[buf].bufhidden = "wipe"
@@ -234,11 +332,21 @@ function M.open(title)
   vim.wo[thinking_win].cursorline = false
   vim.wo[thinking_win].winhighlight = "Normal:NormalFloat,FloatBorder:FloatBorder"
 
+  vim.bo[shortcuts_buf].buftype = "nofile"
+  vim.bo[shortcuts_buf].bufhidden = "wipe"
+  vim.bo[shortcuts_buf].swapfile = false
+  vim.bo[shortcuts_buf].modifiable = false
+  vim.wo[shortcuts_win].cursorline = false
+  vim.wo[shortcuts_win].winhighlight = "Normal:NormalFloat,FloatBorder:FloatBorder"
+  render_shortcuts(shortcuts_buf, shortcuts_win)
+
   local view = setmetatable({
     buf = buf,
     win = win,
     thinking_buf = thinking_buf,
     thinking_win = thinking_win,
+    shortcuts_buf = shortcuts_buf,
+    shortcuts_win = shortcuts_win,
     content = "",
     thinking_content = "",
     status_message = "",
@@ -246,6 +354,14 @@ function M.open(title)
     spinner_index = 1,
     status_timer = nil,
     status_tool = nil,
+    auto_resize = false,
+    response_height = response_height,
+    thinking_height = thinking_height,
+    default_response_height = response_height,
+    default_thinking_height = thinking_height,
+    inner_height = response_height + thinking_height,
+    row = row,
+    col = col,
   }, View)
   for _, target_buf in ipairs({ buf, thinking_buf }) do
     vim.keymap.set("n", "q", function()
@@ -259,6 +375,11 @@ function M.open(title)
         view.on_retry()
       end
     end, { buffer = target_buf, nowait = true, desc = "Regenerate code example" })
+    vim.keymap.set("n", "s", function()
+      if view.on_stop then
+        view.on_stop()
+      end
+    end, { buffer = target_buf, nowait = true, desc = "Stop the current model response" })
   end
 
   view:set_content("Preparing context…\n\nPress `q` to close or `r` to regenerate.")

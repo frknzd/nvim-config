@@ -208,6 +208,12 @@ function M.ensure(opts, on_status, callback)
     tostring(opts.context_size),
     "--no-mmproj",
   })
+  if opts.reasoning_budget then
+    vim.list_extend(args, { "--reasoning-budget", tostring(opts.reasoning_budget) })
+    if opts.reasoning_budget_message then
+      vim.list_extend(args, { "--reasoning-budget-message", opts.reasoning_budget_message })
+    end
+  end
   state.log[1] = "$ " .. table.concat(args, " ")
   on_status("Starting llama.cpp", vim.deepcopy(state.log))
 

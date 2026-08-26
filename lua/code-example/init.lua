@@ -6,6 +6,8 @@ local defaults = {
   model = "unsloth/Qwen3.5-4B-GGUF:UD-Q4_K_XL",
   model_size_gb = 2.78,
   context_size = 8192,
+  reasoning_budget = 384,
+  reasoning_budget_message = "Conclude briefly and provide the final answer now.",
   max_output_tokens = nil,
   startup_timeout = 300,
   idle_timeout = 600,
@@ -123,7 +125,13 @@ local function generate(view, source)
         stream = true,
         temperature = 0.2,
         messages = {
-          { role = "system", content = "You are a precise coding teacher. Prefer compilable, idiomatic examples." },
+          {
+            role = "system",
+            content = table.concat({
+              "You are a precise coding teacher. Prefer compilable, idiomatic examples.",
+              "Reason directly: identify the construct, verify the example, then answer without revisiting decisions.",
+            }, " "),
+          },
           { role = "user", content = prompt(context) },
         },
       }

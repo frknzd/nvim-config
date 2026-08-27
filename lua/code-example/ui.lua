@@ -87,6 +87,7 @@ end
 ---@field tool_count integer
 ---@field recent_tool string?
 ---@field recent_tool_timer uv.uv_timer_t?
+---@field markdown_rendered boolean
 ---@field auto_resize boolean
 ---@field response_height integer
 ---@field thinking_height integer
@@ -258,6 +259,24 @@ function View:set_content(content)
   vim.api.nvim_buf_set_lines(self.buf, 0, -1, false, lines)
   vim.bo[self.buf].modifiable = false
   self:resize_for_content()
+end
+
+function View:set_markdown_rendering(enabled)
+  if not self:is_valid() or self.markdown_rendered == enabled then
+    return
+  end
+  local ok, renderer = pcall(require, "render-markdown")
+  if not ok then
+    return
+  end
+  vim.api.nvim_buf_call(self.buf, function()
+    if enabled then
+      renderer.buf_enable()
+    else
+      renderer.buf_disable()
+    end
+  end)
+  self.markdown_rendered = enabled
 end
 
 function View:resize(response_height, thinking_height)
@@ -453,13 +472,6 @@ function M.open(title)
   vim.wo[win].cursorline = false
   vim.wo[win].winhighlight = "Normal:NormalFloat,FloatBorder:FloatBorder"
 
-  local has_renderer, renderer = pcall(require, "render-markdown")
-  if has_renderer then
-    vim.api.nvim_buf_call(buf, function()
-      renderer.buf_enable()
-    end)
-  end
-
   vim.bo[thinking_buf].buftype = "nofile"
   vim.bo[thinking_buf].bufhidden = "wipe"
   vim.bo[thinking_buf].swapfile = false
@@ -505,6 +517,7 @@ function M.open(title)
     tool_count = 0,
     recent_tool = nil,
     recent_tool_timer = nil,
+    markdown_rendered = false,
     auto_resize = false,
     response_height = response_height,
     thinking_height = thinking_height,

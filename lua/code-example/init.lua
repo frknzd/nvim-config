@@ -72,6 +72,7 @@ end
 
 local function fail(view, message)
   view:set_content(("# Code Example unavailable\n\n%s\n\nPress `q` to close or `r` to retry."):format(message))
+  view:set_markdown_rendering(true)
   view:status("Failed", "error")
   vim.notify(message, vim.log.levels.WARN, { title = "Code Example" })
 end
@@ -317,6 +318,7 @@ local function run_agent(view, url, messages, tool_session, generation, state)
           end
         end
         require("code-example.server").idle(opts.idle_timeout)
+        view:set_markdown_rendering(true)
         view:status("Complete", "done")
         if view.content == "" then
           local reason = result.finish_reason == "length" and "The model exhausted the available context"
@@ -436,6 +438,7 @@ local function stop_generation(view)
     return
   end
   view:status("Stopped", "stopped")
+  view:set_markdown_rendering(true)
   if view.content == "" then
     view:set_content("_Stopped before producing a response. Press `r` to resend or `q` to close._")
   end
@@ -444,6 +447,7 @@ end
 local function generate(view, source)
   view.generation = (view.generation or 0) + 1
   view:reset_tools()
+  view:set_markdown_rendering(false)
   local generation = view.generation
   if active_cancel then
     active_cancel()

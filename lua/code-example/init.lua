@@ -14,10 +14,9 @@ local defaults = {
   idle_timeout = 600,
   context_radius = 35,
   definition_radius = 45,
-  max_tool_rounds = nil,
-  max_tool_calls = nil,
   max_tool_results = 40,
   max_search_results = 8,
+  search_context_lines = 8,
   max_tool_lines = 160,
   max_tool_output_chars = 6000,
 }
@@ -28,16 +27,10 @@ local active_cancel
 local function prompt(context)
   local subject = context.selection and "the selected code" or ("`%s`"):format(context.symbol)
   local sections = {
-    ("The user wants to understand %s in %s. Judge whether it's a reusable construct worth a usage example, "
-      .. "or an orchestration/entry-point function better explained in place — see the framing guidance in "
-      .. "your instructions."):format(subject, context.filetype),
-    table.concat({
-      "Return Markdown only. Start with a one-sentence identification of the construct, then one fenced code",
-      "block: a usage example if it's reusable, or an annotated excerpt of the construct itself if it's a",
-      "wiring/entry-point function with no example worth inventing. Annotate important lines with short",
-      "comments. Follow with at most four concise notes. Do not invent APIs or call sites; mention",
-      "uncertainty explicitly.",
-    }, " "),
+    ("Generate practical documentation for %s in %s."):format(subject, context.filetype),
+    [[Write clear, concise Markdown and organize it in the way that best fits the construct. Explain its practical contract where relevant: parameters, which values are required or optional, defaults, accepted types or shapes, return values, side effects, errors, and constraints. Use simple lists rather than Markdown tables.
+
+Include enough small, realistic examples to make the important usage patterns clear; do not target a fixed number. Ground them in the available evidence and show exact expected output when it is short and deterministic, using an `Expected output:` label and a fenced text block. Omit unsupported or irrelevant details and do not invent behavior. If this is not a reusable API, explain its actual role and show it in context instead of forcing usage examples.]],
   }
   if context.hover and context.hover ~= "" then
     sections[#sections + 1] = "LSP hover information:\n" .. context.hover
@@ -118,6 +111,20 @@ local function tool_label(call)
     arguments = arguments:sub(1, 237) .. "…"
   end
   return ("### Tool call: `%s`\n\nArguments: `%s`"):format(fn.name or "unknown", arguments)
+end
+
+local function tool_added_evidence(result)
+  local normalized = vim.trim(tostring(result or "")):lower()
+  if normalized == "" or normalized == "no result" then
+    return false
+  end
+  return not normalized:match("^no .- found")
+    and not normalized:match("^no matches")
+    and not normalized:match("^duplicate tool call blocked")
+    and not normalized:match("^tool call blocked")
+    and not normalized:match(" failed:")
+    and not normalized:match("^access denied:")
+    and not normalized:match(" requires ")
 end
 
 local function estimate_tokens(str)
@@ -264,13 +271,14 @@ local function run_agent(view, url, messages, tool_session, generation, state)
     view:append_thinking("\n\n_Context nearing the limit — condensed earlier tool results to keep going…_\n")
   end
   view:status("", "busy", true)
+  local available_tools = require("code-example.tools").schemas(state.disabled_tools)
   local payload = {
     model = opts.model,
     stream = true,
     temperature = 0.2,
     messages = messages,
-    tools = require("code-example.tools").schemas(),
-    tool_choice = state.rounds == 0 and "required" or "auto",
+    tools = available_tools,
+    tool_choice = #available_tools == 0 and "none" or "auto",
   }
   if opts.max_output_tokens then
     payload.max_tokens = opts.max_output_tokens
@@ -319,14 +327,6 @@ local function run_agent(view, url, messages, tool_session, generation, state)
       end
 
       state.rounds = state.rounds + 1
-      local over_rounds = opts.max_tool_rounds and state.rounds > opts.max_tool_rounds
-      local over_calls = opts.max_tool_calls and state.calls + #calls > opts.max_tool_calls
-      if over_rounds or over_calls then
-        fail(view, "The model exceeded the configured tool-call limit.")
-        require("code-example.server").idle(opts.idle_timeout)
-        return
-      end
-      state.calls = state.calls + #calls
       view:status("Inspecting sources", "busy")
       local assistant_message = { role = "assistant", tool_calls = calls }
       if result.content ~= "" then
@@ -351,9 +351,16 @@ local function run_agent(view, url, messages, tool_session, generation, state)
         end
         call.id = call.id or ("code_example_tool_%d_%d"):format(state.rounds, index)
         local tool_name = call["function"] and call["function"].name or "unknown"
-        view:status("", "busy", true, tool_name)
+        local arguments = call["function"] and call["function"].arguments or "{}"
+        view:status("", "busy", true)
+        view:tool_used(tool_name, arguments)
         view:append_thinking("\n\n" .. tool_label(call) .. "\n")
-        require("code-example.tools").execute(tool_session, call, function(tool_result)
+        local signature = tool_name .. "\0" .. arguments
+        local duplicate = state.tool_calls_seen[signature]
+        state.tool_calls_seen[signature] = true
+        local call_blocked = state.disabled_tools[tool_name]
+
+        local function complete(tool_result)
           if not view:is_valid() or view.generation ~= generation then
             return
           end
@@ -368,9 +375,30 @@ local function run_agent(view, url, messages, tool_session, generation, state)
             tool_call_id = call.id,
             content = tool_result,
           }
+          if tool_added_evidence(tool_result) then
+            state.tool_failures[tool_name] = 0
+          else
+            local failures = (state.tool_failures[tool_name] or 0) + 1
+            state.tool_failures[tool_name] = failures
+            if failures >= 2 then
+              state.disabled_tools[tool_name] = true
+            end
+          end
           index = index + 1
           execute_next()
-        end)
+        end
+
+        if call_blocked then
+          complete("Tool call blocked because this tool repeatedly produced no useful evidence. Try another tool.")
+        elseif duplicate then
+          complete(
+            "Duplicate tool call blocked. This exact call already ran and produced no new evidence. "
+              .. "Use the earlier result or change strategy."
+          )
+        else
+          state.calls = state.calls + 1
+          require("code-example.tools").execute(tool_session, call, complete)
+        end
       end
       execute_next()
     end,
@@ -415,6 +443,7 @@ end
 
 local function generate(view, source)
   view.generation = (view.generation or 0) + 1
+  view:reset_tools()
   local generation = view.generation
   if active_cancel then
     active_cancel()
@@ -455,21 +484,20 @@ local function generate(view, source)
         {
           role = "system",
           content = table.concat({
-            "You are a precise coding teacher. Prefer compilable, idiomatic examples.",
-            "Reason directly: identify the construct, verify the example, then answer without revisiting decisions.",
-            "Not every symbol deserves a canonical usage example. A local pure helper or a function meant to be",
-            "reused as a library call should get a real usage example grounded in how it is actually called",
-            "elsewhere; use lsp_references if the call pattern is not already clear from the given context. A",
-            "global function that wires systems together, is invoked from one place, or exists as an entry point",
-            "rather than to be reused should instead be explained in place: what it does, its inputs/outputs, and",
-            "how it connects the surrounding pieces — do not invent a hypothetical call site for it just to fill",
-            "the example slot.",
-            "Use the provided tools when LSP, source, or web evidence would improve accuracy; do not guess APIs.",
-            "Prefer LSP and source tools for anything local to the project; use web_search only for external",
-            "documentation, API references, or facts the project cannot answer. When a search snippet is not",
-            "enough, use web_fetch on the most relevant result to read the full page. If LSP diagnostics are",
-            "reported for the code in view, account for them instead of ignoring them. If a tool call fails or",
-            "times out, do not retry it more than once; continue with whatever evidence you already have.",
+            "You generate concise, Rustdoc-style documentation for code under the cursor.",
+            "Explain the callable contract and teach usage through compilable, idiomatic examples grounded in",
+            "the supplied source, types, diagnostics, and real call sites. Clearly distinguish required arguments,",
+            "optional arguments, defaults, return values, side effects, errors, and important constraints.",
+            "Use headings, paragraphs, bullet lists, and fenced code blocks only; never use Markdown tables.",
+            "For short deterministic examples, include their exact expected output in a fenced text block.",
+            "Never invent behavior or APIs. Answer directly when the supplied evidence is sufficient. Otherwise",
+            "use the fewest tools needed; prefer local LSP and source evidence, especially lsp_references for real",
+            "usage patterns. Use source_outline to discover an unfamiliar type's real API before guessing method",
+            "names, and group related source searches into one call. Do not request hover or definition data already",
+            "present. Use the web only when local",
+            "evidence cannot establish an external API. Never repeat an identical tool call; change strategy or",
+            "answer from available evidence when a search has no results. State uncertainty when evidence remains",
+            "incomplete.",
           }, " "),
         },
         { role = "user", content = prompt(context) },
@@ -480,6 +508,9 @@ local function generate(view, source)
         calls = 0,
         compaction_notes = {},
         original_user_content = messages[2].content,
+        tool_calls_seen = {},
+        tool_failures = {},
+        disabled_tools = {},
       })
     end)
   end)

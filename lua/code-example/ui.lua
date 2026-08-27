@@ -20,6 +20,7 @@ local activity_words = {
 local spinner_frames = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
 
 local shortcuts_ns = vim.api.nvim_create_namespace("code_example_shortcuts")
+local tools_ns = vim.api.nvim_create_namespace("code_example_tools")
 local shortcuts_items = {
   { key = "q", label = "close" },
   { key = "r", label = "resend" },
@@ -46,20 +47,46 @@ local function render_shortcuts(bufnr, win)
   end
 end
 
+local function render_tools(bufnr, win, recent_tool, count)
+  local count_text = ("%d %s called"):format(count, count == 1 and "tool" or "tools")
+  local left = recent_tool and ("Tool Used: %s"):format(recent_tool) or ""
+  local width = vim.api.nvim_win_get_width(win)
+  local available_left = math.max(0, width - vim.fn.strdisplaywidth(count_text) - 3)
+  if vim.fn.strdisplaywidth(left) > available_left then
+    left = vim.fn.strcharpart(left, 0, math.max(0, available_left - 1)) .. "…"
+  end
+  local padding = string.rep(" ", math.max(1, width - vim.fn.strdisplaywidth(left) - vim.fn.strdisplaywidth(count_text)))
+  local line = left .. padding .. count_text
+  vim.bo[bufnr].modifiable = true
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { line })
+  vim.bo[bufnr].modifiable = false
+  vim.api.nvim_buf_clear_namespace(bufnr, tools_ns, 0, -1)
+  if left ~= "" then
+    vim.api.nvim_buf_add_highlight(bufnr, tools_ns, "Function", 0, 0, #left)
+  end
+  local count_start = #left + #padding
+  vim.api.nvim_buf_add_highlight(bufnr, tools_ns, "Comment", 0, count_start, count_start + #count_text)
+end
+
 ---@class CodeExampleView
 ---@field buf integer
 ---@field win integer
 ---@field thinking_buf integer
 ---@field thinking_win integer
+---@field tools_buf integer
+---@field tools_win integer
 ---@field shortcuts_buf integer
 ---@field shortcuts_win integer
 ---@field content string
 ---@field thinking_content string
 ---@field status_message string
+---@field status_kind string
 ---@field status_index integer
 ---@field spinner_index integer
 ---@field status_timer uv.uv_timer_t?
----@field status_tool string?
+---@field tool_count integer
+---@field recent_tool string?
+---@field recent_tool_timer uv.uv_timer_t?
 ---@field auto_resize boolean
 ---@field response_height integer
 ---@field thinking_height integer
@@ -93,6 +120,8 @@ function View:is_valid()
     and vim.api.nvim_win_is_valid(self.win)
     and vim.api.nvim_buf_is_valid(self.thinking_buf)
     and vim.api.nvim_win_is_valid(self.thinking_win)
+    and vim.api.nvim_buf_is_valid(self.tools_buf)
+    and vim.api.nvim_win_is_valid(self.tools_win)
 end
 
 function View:set_thinking(content)
@@ -125,29 +154,13 @@ function View:render_status(message, kind)
   local icon = icons[kind] or icons.info
   local hl = kind == "error" and "DiagnosticError" or kind == "done" and "DiagnosticOk" or "DiagnosticInfo"
   local footer
-  local footer_pos = kind == "stopped" and "center" or "left"
+  local footer_pos = "center"
   if kind == "busy" then
     local activity = activity_words[math.max(1, self.status_index)]
     local spinner = spinner_frames[self.spinner_index]
-    local activity_width = 3 + vim.fn.strdisplaywidth(activity[1])
-    local right = self.status_tool and (" Calling %s "):format(self.status_tool) or ""
-    local width = vim.api.nvim_win_get_width(self.thinking_win)
-    local prefix = ""
-    local padding = ""
-    if right == "" then
-      footer_pos = "center"
-    else
-      local prefix_width = math.max(0, math.floor((width - activity_width) / 2))
-      prefix = string.rep(" ", prefix_width)
-      local used = prefix_width + activity_width
-      padding = string.rep(" ", math.max(1, width - used - vim.fn.strdisplaywidth(right) - 2))
-    end
     footer = {
-      { prefix, "Comment" },
       { (" %s "):format(spinner), "DiagnosticInfo" },
       { ("%s "):format(activity[1]), activity[2] },
-      { padding, "Comment" },
-      { right, self.status_tool and "Function" or "Comment" },
     }
   else
     footer = { { (" %s %s "):format(icon, message), hl } }
@@ -166,12 +179,12 @@ function View:stop_status_spinner()
   end
 end
 
-function View:status(message, kind, cycle, tool_name)
+function View:status(message, kind, cycle)
   if not self:is_valid() then
     return
   end
   self.status_message = message
-  self.status_tool = tool_name
+  self.status_kind = kind
   if kind == "busy" and cycle then
     self.status_index = self.status_index % #activity_words + 1
   end
@@ -192,6 +205,47 @@ function View:status(message, kind, cycle, tool_name)
     self.spinner_index = self.spinner_index % #spinner_frames + 1
     self:render_status(self.status_message, "busy")
   end))
+end
+
+function View:tool_used(name, arguments)
+  if not self:is_valid() then
+    return
+  end
+  self.tool_count = self.tool_count + 1
+  local args = type(arguments) == "string" and arguments:gsub("%s+", " ") or "{}"
+  self.recent_tool = ("%s %s"):format(name or "unknown", args)
+  render_tools(self.tools_buf, self.tools_win, self.recent_tool, self.tool_count)
+  if self.recent_tool_timer then
+    self.recent_tool_timer:stop()
+    self.recent_tool_timer:close()
+  end
+  self:render_status(self.status_message, "busy")
+  self.recent_tool_timer = vim.uv.new_timer()
+  self.recent_tool_timer:start(1000, 0, vim.schedule_wrap(function()
+    if self.recent_tool_timer then
+      self.recent_tool_timer:stop()
+      self.recent_tool_timer:close()
+      self.recent_tool_timer = nil
+    end
+    self.recent_tool = nil
+    if self:is_valid() then
+      render_tools(self.tools_buf, self.tools_win, nil, self.tool_count)
+      self:render_status(self.status_message, self.status_kind)
+    end
+  end))
+end
+
+function View:reset_tools()
+  self.tool_count = 0
+  self.recent_tool = nil
+  if self.recent_tool_timer then
+    self.recent_tool_timer:stop()
+    self.recent_tool_timer:close()
+    self.recent_tool_timer = nil
+  end
+  if self:is_valid() then
+    render_tools(self.tools_buf, self.tools_win, nil, 0)
+  end
 end
 
 function View:set_content(content)
@@ -237,13 +291,21 @@ function View:resize(response_height, thinking_height)
     width = self.width,
     height = thinking_height,
   })
-  vim.api.nvim_win_set_config(self.shortcuts_win, {
+  vim.api.nvim_win_set_config(self.tools_win, {
     relative = "editor",
     row = self.row + response_height + 2 + thinking_height + 2,
     col = self.col,
     width = self.width,
     height = 1,
   })
+  vim.api.nvim_win_set_config(self.shortcuts_win, {
+    relative = "editor",
+    row = self.row + response_height + 2 + thinking_height + 5,
+    col = self.col,
+    width = self.width,
+    height = 1,
+  })
+  render_tools(self.tools_buf, self.tools_win, self.recent_tool, self.tool_count)
   render_shortcuts(self.shortcuts_buf, self.shortcuts_win)
 end
 
@@ -257,7 +319,7 @@ function View:reflow()
   self.col = math.max(0, math.floor((vim.o.columns - width) / 2))
   local thinking_height = math.floor((height - 2) / 2)
   local response_height = height - thinking_height - 2
-  thinking_height = thinking_height - 3
+  thinking_height = math.max(1, thinking_height - 6)
   self.default_response_height = response_height
   self.default_thinking_height = thinking_height
   self.inner_height = response_height + thinking_height
@@ -300,6 +362,11 @@ end
 
 function View:close()
   self:stop_status_spinner()
+  if self.recent_tool_timer then
+    self.recent_tool_timer:stop()
+    self.recent_tool_timer:close()
+    self.recent_tool_timer = nil
+  end
   if self.resize_autocmd then
     pcall(vim.api.nvim_del_autocmd, self.resize_autocmd)
     self.resize_autocmd = nil
@@ -313,6 +380,9 @@ function View:close()
   if vim.api.nvim_win_is_valid(self.thinking_win) then
     vim.api.nvim_win_close(self.thinking_win, true)
   end
+  if vim.api.nvim_win_is_valid(self.tools_win) then
+    vim.api.nvim_win_close(self.tools_win, true)
+  end
   if vim.api.nvim_win_is_valid(self.shortcuts_win) then
     vim.api.nvim_win_close(self.shortcuts_win, true)
   end
@@ -322,10 +392,11 @@ function M.open(title)
   local width, height = dimensions()
   local buf = vim.api.nvim_create_buf(false, true)
   local thinking_buf = vim.api.nvim_create_buf(false, true)
+  local tools_buf = vim.api.nvim_create_buf(false, true)
   local shortcuts_buf = vim.api.nvim_create_buf(false, true)
   local thinking_height = math.floor((height - 2) / 2)
   local response_height = height - thinking_height - 2
-  thinking_height = thinking_height - 3
+  thinking_height = math.max(1, thinking_height - 6)
   local row = math.max(0, math.floor((vim.o.lines - height - 2) / 2) - 1)
   local col = math.max(0, math.floor((vim.o.columns - width) / 2))
   local win = vim.api.nvim_open_win(buf, true, {
@@ -352,6 +423,16 @@ function M.open(title)
   })
   local shortcuts_win = vim.api.nvim_open_win(shortcuts_buf, false, {
     relative = "editor",
+    row = row + response_height + 2 + thinking_height + 5,
+    col = col,
+    width = width,
+    height = 1,
+    style = "minimal",
+    border = "rounded",
+    focusable = false,
+  })
+  local tools_win = vim.api.nvim_open_win(tools_buf, false, {
+    relative = "editor",
     row = row + response_height + 2 + thinking_height + 2,
     col = col,
     width = width,
@@ -372,6 +453,13 @@ function M.open(title)
   vim.wo[win].cursorline = false
   vim.wo[win].winhighlight = "Normal:NormalFloat,FloatBorder:FloatBorder"
 
+  local has_renderer, renderer = pcall(require, "render-markdown")
+  if has_renderer then
+    vim.api.nvim_buf_call(buf, function()
+      renderer.buf_enable()
+    end)
+  end
+
   vim.bo[thinking_buf].buftype = "nofile"
   vim.bo[thinking_buf].bufhidden = "wipe"
   vim.bo[thinking_buf].swapfile = false
@@ -381,6 +469,14 @@ function M.open(title)
   vim.wo[thinking_win].wrap = true
   vim.wo[thinking_win].cursorline = false
   vim.wo[thinking_win].winhighlight = "Normal:NormalFloat,FloatBorder:FloatBorder"
+
+  vim.bo[tools_buf].buftype = "nofile"
+  vim.bo[tools_buf].bufhidden = "wipe"
+  vim.bo[tools_buf].swapfile = false
+  vim.bo[tools_buf].modifiable = false
+  vim.wo[tools_win].cursorline = false
+  vim.wo[tools_win].winhighlight = "Normal:NormalFloat,FloatBorder:FloatBorder"
+  render_tools(tools_buf, tools_win, nil, 0)
 
   vim.bo[shortcuts_buf].buftype = "nofile"
   vim.bo[shortcuts_buf].bufhidden = "wipe"
@@ -395,15 +491,20 @@ function M.open(title)
     win = win,
     thinking_buf = thinking_buf,
     thinking_win = thinking_win,
+    tools_buf = tools_buf,
+    tools_win = tools_win,
     shortcuts_buf = shortcuts_buf,
     shortcuts_win = shortcuts_win,
     content = "",
     thinking_content = "",
     status_message = "",
+    status_kind = "info",
     status_index = 1,
     spinner_index = 1,
     status_timer = nil,
-    status_tool = nil,
+    tool_count = 0,
+    recent_tool = nil,
+    recent_tool_timer = nil,
     auto_resize = false,
     response_height = response_height,
     thinking_height = thinking_height,

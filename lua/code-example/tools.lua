@@ -236,6 +236,15 @@ local function decode_arguments(call)
   return decoded
 end
 
+local function searchable(session, path)
+  for root in pairs(session.search_roots) do
+    if within(path, root) then
+      return true
+    end
+  end
+  return false
+end
+
 local function read_source(session, args, callback)
   if type(args.path) ~= "string" or args.path == "" then
     callback("read_source requires a path.")
@@ -246,8 +255,8 @@ local function read_source(session, args, callback)
     path = vim.fs.joinpath(session.root, path)
   end
   path = realpath(path)
-  if not within(path, session.root) and not session.allowed[path] then
-    callback("Access denied: the path is outside the project and was not returned by the LSP.")
+  if not searchable(session, path) and not session.allowed[path] then
+    callback("Access denied: the path is outside the project and LSP-discovered source trees.")
     return
   end
   local ok, lines = pcall(vim.fn.readfile, path)
@@ -260,15 +269,6 @@ local function read_source(session, args, callback)
   local last = math.min(#lines, requested_last, first + session.opts.max_tool_lines - 1)
   local selected = first <= #lines and vim.list_slice(lines, first, last) or {}
   callback(("%s:%d-%d\n%s"):format(path, first, last, table.concat(selected, "\n")))
-end
-
-local function searchable(session, path)
-  for root in pairs(session.search_roots) do
-    if within(path, root) then
-      return true
-    end
-  end
-  return false
 end
 
 local function search_paths(session, requested)

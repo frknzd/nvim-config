@@ -6,8 +6,10 @@ local defaults = {
   model = "mlx-community/Qwen3.5-9B-4bit",
   model_size_gb = 5.98,
   context_size = 32768,
-  enable_thinking = true,
+  enable_thinking = false,
   max_output_tokens = 8192,
+  max_tool_rounds = 3,
+  max_web_calls = 2,
   startup_timeout = 300,
   idle_timeout = 600,
   context_radius = 35,
@@ -25,10 +27,12 @@ local active_cancel
 local function prompt(context)
   local subject = context.selection and "the selected code" or ("`%s`"):format(context.symbol)
   local sections = {
-    ("Generate practical documentation for %s in %s."):format(subject, context.filetype),
+    ("Write practical documentation for %s in %s. Begin the documentation now."):format(subject, context.filetype),
     [[Write clear, concise Markdown and organize it in the way that best fits the construct. Explain its practical contract where relevant: parameters, which values are required or optional, defaults, accepted types or shapes, return values, side effects, errors, and constraints. Use simple lists rather than Markdown tables.
 
-Include enough small, realistic examples to make the important usage patterns clear; do not target a fixed number. Ground them in the available evidence and show exact expected output when it is short and deterministic, using an `Expected output:` label and a fenced text block. Omit unsupported or irrelevant details and do not invent behavior. If this is not a reusable API, explain its actual role and show it in context instead of forcing usage examples.]],
+Include enough small, realistic examples to make the important usage patterns clear; do not target a fixed number. Ground them in the available evidence and show exact expected output when it is short and deterministic, using an `Expected output:` label and a fenced text block. Omit unsupported or irrelevant details and do not invent behavior. If this is not a reusable API, explain its actual role and show it in context instead of forcing usage examples.
+
+The evidence below is normally sufficient. Read it, then write the documentation.]],
   }
   if context.hover and context.hover ~= "" then
     sections[#sections + 1] = "LSP hover information:\n" .. context.hover
@@ -270,15 +274,33 @@ local function run_agent(view, url, messages, tool_session, generation, state)
     view:append_thinking("\n\n_Context nearing the limit — condensed earlier tool results to keep going…_\n")
   end
   view:status("", "busy", true)
-  local available_tools = require("code-example.tools").schemas(state.disabled_tools)
+  -- Once the round budget is spent the tools come off the request entirely, so the model has
+  -- nothing left to do but write the answer from the evidence it already collected.
+  local budget_spent = state.rounds >= (opts.max_tool_rounds or 3)
+  if budget_spent and not state.final_pass then
+    state.final_pass = true
+    messages[#messages + 1] = {
+      role = "user",
+      content = "Stop investigating; the tool budget is spent. Write the documentation now from the evidence "
+        .. "already gathered, and say plainly which parts you could not verify.",
+    }
+    view:append_thinking("\n\n_Tool budget spent — writing the answer from the evidence gathered so far…_\n")
+  end
+  local available_tools = budget_spent and {} or require("code-example.tools").schemas(state.disabled_tools)
   local payload = {
     model = opts.model,
     stream = true,
     temperature = 0.2,
     messages = messages,
-    tools = available_tools,
-    tool_choice = #available_tools == 0 and "none" or "auto",
   }
+  -- An empty Lua table encodes as a JSON object rather than an array, which mlx-lm rejects,
+  -- so drop the key entirely rather than sending `"tools": {}` on the final pass.
+  if #available_tools > 0 then
+    payload.tools = available_tools
+    payload.tool_choice = "auto"
+  else
+    payload.tool_choice = "none"
+  end
   if opts.max_output_tokens then
     payload.max_tokens = opts.max_output_tokens
   end
@@ -359,6 +381,18 @@ local function run_agent(view, url, messages, tool_session, generation, state)
         local duplicate = state.tool_calls_seen[signature]
         state.tool_calls_seen[signature] = true
         local call_blocked = state.disabled_tools[tool_name]
+        local web_exhausted = false
+        if tool_name:match("^web_") then
+          state.web_calls = state.web_calls + 1
+          -- A web search that returns snippets still counts as evidence, so the failure
+          -- tracking below never disables these; a hard call budget is what stops the model
+          -- from spending a whole session re-searching the same external docs.
+          if state.web_calls > (opts.max_web_calls or 2) then
+            web_exhausted = true
+            state.disabled_tools.web_search = true
+            state.disabled_tools.web_fetch = true
+          end
+        end
 
         local function complete(tool_result)
           if not view:is_valid() or view.generation ~= generation then
@@ -388,7 +422,12 @@ local function run_agent(view, url, messages, tool_session, generation, state)
           execute_next()
         end
 
-        if call_blocked then
+        if web_exhausted then
+          complete(
+            "Web budget spent. The web tools are now unavailable. Answer from the local source, LSP, and file "
+              .. "evidence you already have."
+          )
+        elseif call_blocked then
           complete("Tool call blocked because this tool repeatedly produced no useful evidence. Try another tool.")
         elseif duplicate then
           complete(
@@ -486,20 +525,26 @@ local function generate(view, source)
         {
           role = "system",
           content = table.concat({
-            "You generate concise, Rustdoc-style documentation for code under the cursor.",
-            "Explain the callable contract and teach usage through compilable, idiomatic examples grounded in",
-            "the supplied source, types, diagnostics, and real call sites. Clearly distinguish required arguments,",
-            "optional arguments, defaults, return values, side effects, errors, and important constraints.",
-            "Use headings, paragraphs, bullet lists, and fenced code blocks only; never use Markdown tables.",
-            "For short deterministic examples, include their exact expected output in a fenced text block.",
-            "Never invent behavior or APIs. Answer directly when the supplied evidence is sufficient. Otherwise",
-            "use the fewest tools needed; prefer local LSP and source evidence, especially lsp_references for real",
-            "usage patterns. Use source_outline to discover an unfamiliar type's real API before guessing method",
-            "names, and group related source searches into one call. Do not request hover or definition data already",
-            "present. Use the web only when local",
-            "evidence cannot establish an external API. Never repeat an identical tool call; change strategy or",
-            "answer from available evidence when a search has no results. State uncertainty when evidence remains",
-            "incomplete.",
+            "You write concise, Rustdoc-style documentation for the code under the cursor.",
+            "Start writing the documentation immediately. The supplied source, hover text, and diagnostics are",
+            "normally enough on their own. Never open with a plan, a restatement of the task, or a narration of",
+            "what you are about to check; the first thing you emit is the documentation itself.",
+            ("You may take at most %d tool rounds for the entire answer, and most answers should take none."):format(
+              opts.max_tool_rounds or 3
+            ),
+            "Call a tool only to obtain one specific fact you must state and cannot see. Prefer local evidence:",
+            "lsp_references for real call sites, source_outline before guessing an unfamiliar type's method names.",
+            "Group related searches into a single call. Never re-request hover or definition data already supplied,",
+            "and never repeat an identical call. When a search returns nothing useful, stop searching and write the",
+            "documentation from what you have, saying plainly which part is unverified.",
+            ("The web tools are a last resort, capped at %d calls."):format(opts.max_web_calls or 2),
+            "Two empty web searches mean the answer is not on the web, so fall back to the local source instead of",
+            "searching again.",
+            "Explain the callable contract: required arguments, optional arguments, defaults, return values, side",
+            "effects, errors, and important constraints. Teach usage through compilable, idiomatic examples grounded",
+            "in the supplied evidence. Use headings, paragraphs, bullet lists, and fenced code blocks only; never use",
+            "Markdown tables. For short deterministic examples, include their exact expected output in a fenced text",
+            "block. Never invent behavior or APIs; state uncertainty instead.",
           }, " "),
         },
         { role = "user", content = prompt(context) },
@@ -508,6 +553,7 @@ local function generate(view, source)
       run_agent(view, url, messages, tool_session, generation, {
         rounds = 0,
         calls = 0,
+        web_calls = 0,
         compaction_notes = {},
         original_user_content = messages[2].content,
         tool_calls_seen = {},

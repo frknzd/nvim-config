@@ -3,13 +3,11 @@ local M = {}
 local defaults = {
   command = nil,
   endpoint = nil,
-  model = "unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL",
-  model_size_gb = 5.97,
+  model = "mlx-community/Qwen3.5-9B-4bit",
+  model_size_gb = 5.98,
   context_size = 32768,
-  reasoning_budget = 1024,
-  reasoning_budget_message = "Conclude briefly and provide the final answer now.",
-  reasoning_effort = "low",
-  max_output_tokens = nil,
+  enable_thinking = true,
+  max_output_tokens = 8192,
   startup_timeout = 300,
   idle_timeout = 600,
   context_radius = 35,
@@ -88,11 +86,11 @@ local function show_server_log(view, status, lines)
     "",
     ("Model: `%s`"):format(opts.model),
     "",
-    "Recent llama.cpp output:",
+    "Recent mlx-lm output:",
     "",
   }
   if not lines or #lines == 0 then
-    content[#content + 1] = "    Waiting for llama.cpp output…"
+    content[#content + 1] = "    Waiting for mlx-lm output…"
   else
     local first = math.max(1, #lines - 29)
     for index = first, #lines do
@@ -169,7 +167,7 @@ local function tools_tokens()
 end
 
 local function prompt_budget()
-  local reserved = (opts.max_output_tokens or 1024) + (opts.reasoning_budget or 0) + 512
+  local reserved = (opts.max_output_tokens or 1024) + 512
   return math.max(512, opts.context_size - reserved)
 end
 
@@ -284,8 +282,8 @@ local function run_agent(view, url, messages, tool_session, generation, state)
   if opts.max_output_tokens then
     payload.max_tokens = opts.max_output_tokens
   end
-  if opts.reasoning_effort then
-    payload.reasoning_effort = opts.reasoning_effort
+  if opts.enable_thinking ~= nil then
+    payload.chat_template_kwargs = { enable_thinking = opts.enable_thinking }
   end
   active_cancel = require("code-example.request").start(url, payload, {
     on_chunk = function(chunk)

@@ -57,7 +57,10 @@ local function feed_sse(parser, chunk)
           parser.finish_reason = choice.finish_reason
         end
         local content = choice and choice.delta and choice.delta.content
-        local reasoning = choice and choice.delta and choice.delta.reasoning_content
+        -- llama.cpp names it reasoning_content, mlx-lm names it reasoning.
+        local reasoning = choice
+          and choice.delta
+          and (choice.delta.reasoning_content or choice.delta.reasoning)
         append_tool_calls(parser, choice and choice.delta and choice.delta.tool_calls)
         if type(content) == "string" and content ~= "" then
           parser.content = parser.content .. content

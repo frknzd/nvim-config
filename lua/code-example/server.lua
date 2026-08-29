@@ -22,10 +22,8 @@ local function executable(opts)
   if opts.command then
     return vim.fn.executable(opts.command) == 1 and opts.command or nil
   end
-  for _, command in ipairs({ "llama", "llama-server" }) do
-    if vim.fn.executable(command) == 1 then
-      return command
-    end
+  if vim.fn.executable("mlx_lm.server") == 1 then
+    return "mlx_lm.server"
   end
 end
 
@@ -69,7 +67,7 @@ local function append_log(data, on_status)
     return
   end
   data = data:gsub("\27%[[%d;?]*[ -/]*[@-~]", ""):gsub("\r\n", "\n"):gsub("\r", "\n")
-  local status = "Starting llama.cpp"
+  local status = "Starting mlx-lm"
   for _, line in ipairs(vim.split(data, "\n", { trimempty = true })) do
     line = vim.trim(line)
     if line ~= "" then
@@ -98,7 +96,7 @@ local function download_size(model)
   end
   local hf_home = vim.env.HF_HOME or vim.fn.expand("~/.cache/huggingface")
   local model_dir = "models--" .. repo:gsub("/", "--")
-  local pattern = vim.fs.joinpath(hf_home, "hub", model_dir, "blobs", "*.downloadInProgress")
+  local pattern = vim.fs.joinpath(hf_home, "hub", model_dir, "blobs", "*")
   local total = 0
   for _, filename in ipairs(vim.fn.glob(pattern, false, true)) do
     local stat = vim.uv.fs_stat(filename)
@@ -125,14 +123,79 @@ local function report_download(opts, on_status)
   on_status(status, lines)
 end
 
-local function poll_ready(url, opts, on_status, started_at)
-  health(url, function(ready)
-    if ready then
-      notify_waiters(url)
+-- A single throwaway token. mlx-lm binds its socket before it has the weights, so this
+-- is what actually forces the download and the load to happen.
+local function warmup(url, opts, callback)
+  local payload = vim.json.encode({
+    model = opts.model,
+    messages = { { role = "user", content = "ping" } },
+    max_tokens = 1,
+    stream = false,
+  })
+  vim.system({
+    "curl",
+    "--silent",
+    "--show-error",
+    "--fail-with-body",
+    "-H",
+    "Content-Type: application/json",
+    "--data-binary",
+    "@-",
+    url .. "/v1/chat/completions",
+  }, { stdin = payload, text = true }, function(result)
+    vim.schedule(function()
+      callback(result.code == 0, vim.trim((result.stdout or "") .. (result.stderr or "")))
+    end)
+  end)
+end
+
+-- Keeps the download/load progress flowing while the warmup request is in flight.
+local function await_warmup(url, opts, on_status, started_at)
+  local settled = false
+  local function settle(ready_url, err)
+    if settled then
+      return
+    end
+    settled = true
+    notify_waiters(ready_url, err)
+  end
+
+  warmup(url, opts, function(ok, detail)
+    if ok then
+      settle(url)
+    else
+      settle(nil, detail ~= "" and detail or "The model failed to load")
+    end
+  end)
+
+  local function tick()
+    if settled then
       return
     end
     if not state.process then
-      local detail = state.log[#state.log] or "llama server exited before becoming ready"
+      settle(nil, state.log[#state.log] or "mlx-lm exited before the model was ready")
+      return
+    end
+    if vim.uv.now() - started_at > opts.startup_timeout * 1000 then
+      M.stop()
+      settle(nil, "Timed out waiting for the model to load")
+      return
+    end
+    report_download(opts, on_status)
+    vim.defer_fn(tick, 300)
+  end
+  tick()
+end
+
+local function poll_ready(url, opts, on_status, started_at)
+  health(url, function(ready)
+    if ready then
+      on_status("Loading model", vim.deepcopy(state.log))
+      await_warmup(url, opts, on_status, started_at)
+      return
+    end
+    if not state.process then
+      local detail = state.log[#state.log] or "mlx-lm exited before becoming ready"
       notify_waiters(nil, detail)
       return
     end
@@ -141,7 +204,6 @@ local function poll_ready(url, opts, on_status, started_at)
       notify_waiters(nil, "Timed out waiting for the model to load")
       return
     end
-    report_download(opts, on_status)
     vim.defer_fn(function()
       poll_ready(url, opts, on_status, started_at)
     end, 300)
@@ -164,7 +226,7 @@ function M.ensure(opts, on_status, callback)
 
   local command = executable(opts)
   if not command then
-    callback(nil, "Install llama.cpp (`brew install llama.cpp`) and retry.")
+    callback(nil, "Install mlx-lm (`brew install mlx-lm`) and retry.")
     return
   end
 
@@ -193,29 +255,20 @@ function M.ensure(opts, on_status, callback)
   state.waiters[#state.waiters + 1] = callback
   state.log = {}
 
-  local args = { command }
-  if command:match("/llama$") or command == "llama" then
-    args[#args + 1] = "serve"
-  end
-  vim.list_extend(args, {
-    "-hf",
+  local args = {
+    command,
+    "--model",
     opts.model,
     "--host",
     "127.0.0.1",
     "--port",
     tostring(state.port),
-    "-c",
-    tostring(opts.context_size),
-    "--no-mmproj",
-  })
-  if opts.reasoning_budget ~= nil then
-    vim.list_extend(args, { "--reasoning-budget", tostring(opts.reasoning_budget) })
-    if opts.reasoning_budget_message then
-      vim.list_extend(args, { "--reasoning-budget-message", opts.reasoning_budget_message })
-    end
+  }
+  if opts.max_output_tokens then
+    vim.list_extend(args, { "--max-tokens", tostring(opts.max_output_tokens) })
   end
   state.log[1] = "$ " .. table.concat(args, " ")
-  on_status("Starting llama.cpp", vim.deepcopy(state.log))
+  on_status("Starting mlx-lm", vim.deepcopy(state.log))
 
   state.owned = true
   state.process = vim.system(args, {
@@ -231,7 +284,7 @@ function M.ensure(opts, on_status, callback)
       state.process = nil
       state.owned = false
       if state.starting then
-        local detail = state.log[#state.log] or result.stderr or ("llama server exited (%d)"):format(result.code)
+        local detail = state.log[#state.log] or result.stderr or ("mlx-lm exited (%d)"):format(result.code)
         notify_waiters(nil, detail)
       end
     end)

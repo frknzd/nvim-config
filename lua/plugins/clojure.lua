@@ -1,9 +1,10 @@
 -- Cursive-style structural editing, in vim-native bindings.
 --
 -- The slurp/barf/drag family keeps nvim-paredit's `>`/`<` operator pairs, and
--- everything else lives under <localleader>. All of it is buffer-local to the
--- lisp filetypes, so `(`, `)`, `W`, `E` and friends keep their usual meaning
--- everywhere else.
+-- everything else lives under <localleader>. LazyVim's existing mini.pairs
+-- supplies balanced insertion plus pair-aware backspace/enter behavior. All of
+-- it is buffer-local to the lisp filetypes, so `(`, `)`, `W`, `E` and friends
+-- keep their usual meaning everywhere else.
 
 local filetypes = { "clojure", "fennel", "scheme", "lisp", "janet" }
 
@@ -64,8 +65,10 @@ return {
         -- Delete. `pk` is Cursive's "kill sexp", `pK` its "kill".
         ["<localleader>pk"] = { api.delete_form, "Kill form" },
         ["<localleader>pK"] = { extras.kill_to_end_of_form, "Kill to end of form" },
+        ["<localleader>pD"] = { api.delete_top_level_form, "Kill top-level form" },
         ["<localleader>pe"] = { api.delete_element, "Kill element" },
         ["<localleader>pi"] = { api.delete_in_form, "Kill inside form" },
+        ["<localleader>pI"] = { api.delete_in_top_level_form, "Kill inside top-level form" },
 
         -- Element motions.
         ["W"] = { api.move_to_next_element_head, "Next element head", repeatable = false, mode = { "n", "x", "o", "v" } },
@@ -74,6 +77,7 @@ return {
         ["gE"] = { api.move_to_prev_element_tail, "Prev element tail", repeatable = false, mode = { "n", "x", "o", "v" } },
         ["("] = { api.move_to_parent_form_start, "Parent form head", repeatable = false, mode = { "n", "x", "v" } },
         [")"] = { api.move_to_parent_form_end, "Parent form tail", repeatable = false, mode = { "n", "x", "v" } },
+        ["T"] = { api.move_to_top_level_form_head, "Top-level form head", repeatable = false, mode = { "n", "x", "v" } },
 
         -- Text objects, so `daf`, `yif`, `cie` and so on are sexp-aware.
         ["af"] = { api.select_around_form, "Around form", repeatable = false, mode = { "o", "v" } },

@@ -10,8 +10,8 @@ vim.o.termguicolors = true
 vim.o.background = "dark"
 
 local c = {
-  bg = "#282828",
-  bg0_h = "#1d2021",
+  bg = "#1d2021",
+  bg0_h = "#282828",
   bg1 = "#3c3836",
   bg2 = "#504945",
   bg3 = "#665c54",

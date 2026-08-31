@@ -181,40 +181,6 @@ return {
     "neovim/nvim-lspconfig",
     opts = {
       servers = {
-        clojure_lsp = { enabled = false },
-        cljsp = {
-          cmd = { "/Users/frkn/Projects/cljsp/zig-out/bin/cljsp" },
-          filetypes = { "clojure" },
-          root_dir = function(bufnr, on_dir)
-            local function use_root(root)
-              if root and root ~= "" then
-                on_dir(vim.fs.abspath(root))
-              end
-            end
-
-            local config = vim.fs.find(".lsp/config.edn", {
-              path = vim.api.nvim_buf_get_name(bufnr),
-              upward = true,
-            })[1]
-            if config then
-              use_root(vim.fs.dirname(vim.fs.dirname(config)))
-              return
-            end
-
-            local root = vim.fs.root(bufnr, {
-              "project.clj",
-              "deps.edn",
-              "build.boot",
-              "shadow-cljs.edn",
-              "figwheel-main.edn",
-              "bb.edn",
-              "package.json",
-              ".git",
-            })
-            use_root(root)
-          end,
-          mason = false,
-        },
         zls = {
           settings = {
             zls = {

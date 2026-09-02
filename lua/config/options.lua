@@ -3,5 +3,5 @@
 -- Add any additional options here
 
 -- Write in place instead of rename+create. Otherwise a floating terminal
--- (tail -f, zig watch, cat of an already-open fd) keeps the old inode.
+-- (tail -f, a file watcher, cat of an already-open fd) keeps the old inode.
 vim.opt.backupcopy = "yes"

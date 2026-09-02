@@ -175,29 +175,6 @@ local function preserve_active_signature_highlights()
 end
 
 return {
-  -- zls inserts `print(comptime fmt: []const u8, args: anytype)` as snippet
-  -- placeholders when this is on. Turn it off so accept inserts `print()`.
-  {
-    "neovim/nvim-lspconfig",
-    opts = {
-      servers = {
-        zls = {
-          settings = {
-            zls = {
-              enable_snippets = true,
-              enable_argument_placeholders = false,
-              -- Keep Zig buffers free of inline parameter and type hints.
-              inlay_hints_show_parameter_name = false,
-              inlay_hints_show_variable_type_hints = false,
-              inlay_hints_show_struct_literal_field_type = false,
-              inlay_hints_show_builtin = false,
-            },
-          },
-        },
-      },
-    },
-  },
-
   -- Noice only keeps the popup open while the last char is `(`, so it vanishes
   -- as soon as you type an argument. Let blink.cmp own signature help instead.
   {
@@ -240,7 +217,7 @@ return {
   },
 
   -- Stays open after `(`, follows the cursor, highlights the active arg.
-  -- zls retriggers on `,` so the highlight advances to the next parameter.
+  -- Servers that retrigger on `,` advance the highlight to the next parameter.
   {
     "saghen/blink.cmp",
     init = function()

@@ -1,5 +1,4 @@
 -- gruvbox-chroma: classic gruvbox accents kept; colliding tokens get distinct hues
--- Palette from zig-colorscheme-demo.html
 
 vim.cmd("highlight clear")
 if vim.fn.exists("syntax_on") == 1 then

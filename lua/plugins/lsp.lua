@@ -174,13 +174,41 @@ local function preserve_active_signature_highlights()
   signature_window.inactive_highlights_installed = true
 end
 
+-- A Clojure monorepo keeps one clojure-lsp for the whole repository and
+-- describes every module in `<root>/.lsp/config.edn` (`:project-specs`,
+-- `:source-paths`, `:paths-ignore-regex`). The default root markers stop at the
+-- nearest `project.clj`, so each module would start its own server that ignores
+-- that file: sibling modules are then seen through their `checkouts` symlinks
+-- and jars, and definitions land on a stale copy of the file.
+local function clojure_root(bufnr, on_dir)
+  local path = vim.api.nvim_buf_get_name(bufnr)
+  path = path ~= "" and path or (vim.uv.cwd() or "")
+
+  -- Stay inside the repository, so a personal `~/.lsp/config.edn` is never
+  -- mistaken for a project root.
+  local repo = vim.fs.root(bufnr, ".git")
+
+  -- Outermost checked-in clojure-lsp configuration wins.
+  local root ---@type string?
+  for dir in vim.fs.parents(path) do
+    if vim.uv.fs_stat(dir .. "/.lsp/config.edn") then
+      root = dir
+    end
+    if dir == repo then
+      break
+    end
+  end
+
+  on_dir(root or vim.fs.root(bufnr, { "project.clj", "deps.edn", "build.boot", "shadow-cljs.edn", "bb.edn" }) or repo)
+end
+
 return {
   {
     "neovim/nvim-lspconfig",
     opts = {
       servers = {
         jsonls = {},
-        clojure_lsp = {},
+        clojure_lsp = { root_dir = clojure_root },
         zls = {},
       },
     },

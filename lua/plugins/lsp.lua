@@ -175,6 +175,17 @@ local function preserve_active_signature_highlights()
 end
 
 return {
+  {
+    "neovim/nvim-lspconfig",
+    opts = {
+      servers = {
+        jsonls = {},
+        clojure_lsp = {},
+        zls = {},
+      },
+    },
+  },
+
   -- Noice only keeps the popup open while the last char is `(`, so it vanishes
   -- as soon as you type an argument. Let blink.cmp own signature help instead.
   {

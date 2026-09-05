@@ -218,10 +218,14 @@ hi("@lsp.type.decorator", { link = "@attribute" })
 hi("@lsp.type.enum", { link = "@type" })
 hi("@lsp.type.enumMember", { link = "@constant" })
 hi("@lsp.type.function", { link = "@function" })
-hi("@lsp.type.interface", { link = "@type" })
+-- Protocols/interfaces are abstract, not concrete types: keep them off the
+-- class/type yellow.
+hi("@lsp.type.interface", { fg = c.violet })
 hi("@lsp.type.macro", { link = "@function.macro" })
-hi("@lsp.type.method", { link = "@method" })
-hi("@lsp.type.namespace", { link = "@module" })
+-- Java interop methods should not read like Clojure functions (green).
+hi("@lsp.type.method", { fg = c.blue })
+-- Namespaces are module-like; separate them from plain locals (fg).
+hi("@lsp.type.namespace", { fg = c.indigo })
 hi("@lsp.type.parameter", { link = "@parameter" })
 hi("@lsp.type.property", { link = "@property" })
 hi("@lsp.type.struct", { link = "@type" })
@@ -230,6 +234,14 @@ hi("@lsp.type.typeParameter", { link = "@type" })
 hi("@lsp.type.variable", { link = "@variable" })
 hi("@lsp.typemod.variable.defaultLibrary", { link = "@variable.builtin" })
 hi("@lsp.typemod.function.defaultLibrary", { link = "@function.builtin" })
+-- clojure-lsp emits these; pin them instead of relying on Neovim defaults.
+hi("@lsp.type.keyword", { link = "@keyword" })
+hi("@lsp.type.event", { fg = c.wine })
+-- Modifiers were invisible: make declarations stand out from references and
+-- protocol implementations from interop calls, without changing the base hue.
+hi("@lsp.typemod.function.definition", { bold = true })
+hi("@lsp.typemod.variable.definition", { bold = true })
+hi("@lsp.typemod.method.implementation", { italic = true })
 
 -- LazyVim / common plugins
 hi("LazyNormal", { link = "NormalFloat" })

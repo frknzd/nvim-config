@@ -212,6 +212,7 @@ return {
           root_dir = clojure_root,
           on_attach = function(client)
             client.server_capabilities.semanticTokensProvider = nil
+            require("config.clojure_completion").attach(client)
           end,
         },
         zls = {},

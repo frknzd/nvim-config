@@ -17,7 +17,7 @@ local palette = {
   fg_dim = "#919288",
   -- buffers use the palette's `dark1` (see `override_palette` below); the
   -- picker/explorer sits one step above it so the panel is still readable as a
-  -- separate surface. Everything else keeps monokai-pro's own backgrounds.
+  -- separate surface. Completion popups share that same panel background.
   editor = "#1d1e19",
   panel = "#24251f",
   sel = "#3e3f38",
@@ -122,9 +122,77 @@ local function apply_overrides()
   hl("SnacksIndent", { fg = "#3b3c35", nocombine = true })
   hl("SnacksIndentScope", { fg = p.guide, nocombine = true })
 
-  -- NOTE: NormalFloat, Pmenu, blink, which-key, noice, lazy, mason, ... keep
-  -- monokai-pro's own backgrounds on purpose - only the picker/explorer panel
-  -- above is repainted.
+  -- Completion: one dark surface for the menu, docs and signature help.
+  -- Keep label backgrounds unset so selection spans the entire row without
+  -- hiding the theme's per-kind icon colours or signature syntax highlights.
+  for _, win in ipairs({ "Menu", "Doc", "SignatureHelp" }) do
+    hl("BlinkCmp" .. win, { fg = p.fg, bg = p.panel })
+    hl("BlinkCmp" .. win .. "Border", { fg = p.guide, bg = p.panel })
+  end
+  hl("BlinkCmpMenuSelection", { bg = p.sel })
+  hl("BlinkCmpLabel", { fg = p.fg })
+  hl("BlinkCmpLabelMatch", { fg = p.orange, bold = true })
+  hl("BlinkCmpLabelDetail", { fg = p.fg_dim })
+  hl("BlinkCmpLabelDescription", { fg = p.fg_dim })
+  hl("BlinkCmpLabelDeprecated", { fg = p.grey, strikethrough = true })
+  hl("BlinkCmpSource", { fg = p.fg_dim })
+  hl("BlinkCmpDocSeparator", { fg = p.guide, bg = p.panel })
+  hl("BlinkCmpDocCursorLine", { bg = p.sel })
+  hl("BlinkCmpScrollBarThumb", { bg = p.guide })
+  hl("BlinkCmpScrollBarGutter", { bg = p.panel })
+
+  -- Shared surfaces. Use links so lazily loaded UIs inherit the same treatment
+  -- without replacing their syntax, diagnostic colours or active controls.
+  hl("NormalFloat", { fg = p.fg, bg = p.panel })
+  hl("FloatBorder", { fg = p.guide, bg = p.panel })
+  hl("FloatTitle", { fg = p.yellow, bg = p.panel, bold = true })
+  hl("FloatFooter", { fg = p.fg_dim, bg = p.panel })
+  hl("WinSeparator", { fg = p.guide, bg = p.editor })
+  hl("Pmenu", { fg = p.fg, bg = p.panel })
+  hl("PmenuSel", { bg = p.sel })
+  hl("PmenuKind", { fg = p.cyan, bg = p.panel })
+  hl("PmenuExtra", { fg = p.fg_dim, bg = p.panel })
+  hl("PmenuKindSel", { fg = p.cyan, bg = p.sel })
+  hl("PmenuExtraSel", { fg = p.fg_dim, bg = p.sel })
+  hl("PmenuSbar", { bg = p.panel })
+  hl("PmenuThumb", { bg = p.guide })
+  for target, groups in pairs({
+    NormalFloat = {
+      "LazyNormal", "MasonNormal", "WhichKeyNormal", "NoiceCmdlinePopup",
+      "NoicePopup", "NoiceConfirm", "NoiceSplit", "NoiceMini",
+      "NoicePopupmenu", "SnacksNormal", "SnacksNormalNC", "SnacksInputNormal",
+      "SnacksNotifierHistory", "SnacksNotifierMinimal", "NotifyBackground",
+    },
+    FloatBorder = {
+      "LazyBorder", "MasonBorder", "WhichKeyBorder", "NoiceCmdlinePopupBorder",
+      "NoicePopupBorder", "NoiceConfirmBorder", "NoiceSplitBorder",
+      "NoicePopupmenuBorder", "SnacksInputBorder",
+    },
+    FloatTitle = { "WhichKeyTitle", "NoiceCmdlinePopupTitle", "SnacksTitle", "SnacksInputTitle" },
+    FloatFooter = { "SnacksFooter" },
+    PmenuSel = { "NoicePopupmenuSelected" },
+  }) do
+    for _, group in ipairs(groups) do
+      hl(group, { link = target })
+    end
+  end
+  hl("NoiceCmdlinePopupBorderSearch", { fg = p.cyan, bg = p.panel })
+  hl("LazyProp", { fg = p.green, bg = p.panel })
+  hl("LazyProgressDone", { fg = p.green, bg = p.panel })
+  hl("LazyProgressTodo", { fg = p.guide, bg = p.panel })
+  hl("LazyButton", { fg = p.fg_dim, bg = p.panel })
+  hl("LazyButtonActive", { fg = p.fg, bg = p.sel, bold = true })
+  for level, colour in pairs({ ERROR = p.red, WARN = p.orange, INFO = p.cyan, DEBUG = p.fg_dim, TRACE = p.purple }) do
+    hl("Notify" .. level .. "Body", { link = "NormalFloat" })
+    hl("Notify" .. level .. "Border", { link = "FloatBorder" })
+    hl("Notify" .. level .. "Title", { fg = colour, bg = p.panel, bold = true })
+    hl("Notify" .. level .. "Icon", { fg = colour, bg = p.panel })
+    local suffix = level:sub(1, 1) .. level:sub(2):lower()
+    hl("SnacksNotifier" .. suffix, { link = "NormalFloat" })
+    hl("SnacksNotifierBorder" .. suffix, { link = "FloatBorder" })
+    hl("SnacksNotifierTitle" .. suffix, { fg = colour, bg = p.panel, bold = true })
+    hl("SnacksNotifierIcon" .. suffix, { fg = colour, bg = p.panel })
+  end
 
   -- lazygit: snacks generates ~/.cache/nvim/lazygit-theme.yml from highlight
   -- groups, so give it dedicated ones instead of borrowing editor groups
@@ -151,8 +219,7 @@ return {
     opts = {
       transparent_background = false,
       terminal_colors = true,
-      -- Repoint the editor background at the palette's `dark1` (= the sidebar /
-      -- picker background) so buffers, panels and floats share one colour.
+      -- Keep buffers dark; panels and floats sit one shade above them.
       -- Overriding the *palette* (not the scheme) means every derived shade -
       -- CursorLine, Visual, folds, diff backgrounds - is recomputed from it.
       override_palette = function()

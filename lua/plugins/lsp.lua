@@ -208,7 +208,12 @@ return {
     opts = {
       servers = {
         jsonls = {},
-        clojure_lsp = { root_dir = clojure_root },
+        clojure_lsp = {
+          root_dir = clojure_root,
+          on_attach = function(client)
+            client.server_capabilities.semanticTokensProvider = nil
+          end,
+        },
         zls = {},
       },
     },

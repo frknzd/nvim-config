@@ -2,6 +2,29 @@ return {
   {
     "folke/snacks.nvim",
     opts = {
+      -- snacks writes ~/.cache/nvim/lazygit-theme.yml by resolving these
+      -- highlight groups; the LazyGit* ones are defined in
+      -- lua/plugins/colorschemes.lua. The defaults reuse editor groups, which
+      -- with monokai gives a white cherry-pick background and a washed-out
+      -- inactive border.
+      lazygit = {
+        -- stylua: ignore
+        theme = {
+          [241]                      = { fg = "LazyGitGrey" },
+          activeBorderColor          = { fg = "LazyGitActiveBorder", bold = true },
+          inactiveBorderColor        = { fg = "LazyGitInactiveBorder" },
+          searchingActiveBorderColor = { fg = "LazyGitSearchingBorder", bold = true },
+          -- lazygit wants plain color values here, and snacks deep-merges with
+          -- its defaults, so both must use the `fg` key or the default
+          -- `fg = "Identifier"` leaks in as a second (white) color.
+          cherryPickedCommitBgColor  = { fg = "LazyGitCherryPickedBg" },
+          cherryPickedCommitFgColor  = { fg = "LazyGitCherryPickedFg" },
+          defaultFgColor             = { fg = "LazyGitDefaultFg" },
+          optionsTextColor           = { fg = "LazyGitOptionsText" },
+          selectedLineBgColor        = { bg = "LazyGitSelectedLine" },
+          unstagedChangesColor       = { fg = "LazyGitUnstagedChanges" },
+        },
+      },
       picker = {
         sources = {
           explorer = {

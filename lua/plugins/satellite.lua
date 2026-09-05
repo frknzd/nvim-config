@@ -41,8 +41,10 @@ return {
         quickfix = { enable = true, signs = { "-", "=", "≡" } },
       },
     },
-    -- Colors need no overrides: satellite links SatelliteGitSigns* -> GitSigns*
-    -- and SatelliteDiagnostic* -> Diagnostic*, both defined by gruvbox-chroma.
+    -- satellite only links SatelliteGitSigns* -> GitSigns* (and
+    -- SatelliteDiagnostic* -> Diagnostic*) with `default = true`, which is too
+    -- dim at `winblend = 50`; the explicit colors live in
+    -- lua/plugins/colorschemes.lua so they get re-applied on every :colorscheme.
     -- satellite ships only :SatelliteEnable / :SatelliteDisable / :SatelliteRefresh
     -- (no toggle command), so track the state ourselves.
     keys = {

@@ -144,9 +144,6 @@ local function apply_overrides()
 end
 
 return {
-  -- replaced by monokai-pro; kept disabled so `:Lazy clean` removes it
-  { "tanvirtin/monokai.nvim", enabled = false },
-
   {
     "loctvl842/monokai-pro.nvim",
     lazy = false,

@@ -7,6 +7,15 @@ return {
       triggers = {
         { "<auto>", mode = { "n", "i", "x", "s", "o", "t", "c" } },
       },
+      -- which-key resolves a pressed key against the visible node *before* it
+      -- checks its scroll keys, so a scroll key that is also a mapping never
+      -- scrolls. The default <c-u> is mapped in insert mode (i_CTRL-U-default),
+      -- which bites here because triggers are enabled for `i` as well.
+      -- <PageDown>/<PageUp> are unmapped in every mode (fn+Down / fn+Up).
+      keys = {
+        scroll_down = "<PageDown>",
+        scroll_up = "<PageUp>",
+      },
     },
     keys = {
       {

@@ -41,6 +41,38 @@ return {
         quickfix = { enable = true, signs = { "-", "=", "≡" } },
       },
     },
+    -- Deleted lines produce a single scrollbar row (a delete hunk has
+    -- `added.count == 0`), while add/change hunks usually span several rows.
+    -- satellite renders one mark per row per handler -- `apply_mark` reuses the
+    -- extmark id `pos + 1`, so for a given row the *last* mark wins -- and the
+    -- gitsigns handler emits marks in hunk order. A deletion therefore
+    -- disappears whenever a later add/change hunk maps onto the same row, which
+    -- is the common case in any file large enough for rows to cover many lines.
+    -- Re-order the handler's marks so deletions are applied last and survive.
+    config = function(_, opts)
+      local handlers = require("satellite.handlers")
+      local register = handlers.register
+
+      -- Hook registration rather than the handler table: builtin handlers are
+      -- only loaded on the first render, which setup() below may trigger.
+      handlers.register = function(spec)
+        if spec.name == "gitsigns" then
+          local update = spec.update
+          spec.update = function(bufnr, winid)
+            local marks, deletions = {}, {}
+            for _, mark in ipairs(update(bufnr, winid)) do
+              table.insert(mark.highlight == "SatelliteGitSignsDelete" and deletions or marks, mark)
+            end
+            vim.list_extend(marks, deletions)
+            return marks
+          end
+        end
+        return register(spec)
+      end
+
+      require("satellite").setup(opts)
+    end,
+
     -- satellite only links SatelliteGitSigns* -> GitSigns* (and
     -- SatelliteDiagnostic* -> Diagnostic*) with `default = true`, which is too
     -- dim at `winblend = 50`; the explicit colors live in

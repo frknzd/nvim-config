@@ -215,7 +215,13 @@ return {
             require("config.clojure_completion").attach(client)
           end,
         },
-        zls = {},
+        zls = {
+          settings = {
+            zls = {
+              semantic_tokens = "full",
+            },
+          },
+        },
       },
     },
   },

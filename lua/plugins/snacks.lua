@@ -1,3 +1,6 @@
+-- Use the full width and leave a thin strip below the floating views.
+local picker_size = { width = 0, height = 0.99, min_width = 0, min_height = 0 }
+
 return {
   {
     "folke/snacks.nvim",
@@ -8,6 +11,7 @@ return {
       -- with monokai gives a white cherry-pick background and a washed-out
       -- inactive border.
       lazygit = {
+        win = { width = 0, height = 0.99 },
         -- stylua: ignore
         theme = {
           [241]                      = { fg = "LazyGitGrey" },
@@ -26,6 +30,10 @@ return {
         },
       },
       picker = {
+        layouts = {
+          default = { layout = picker_size },
+          vertical = { layout = picker_size },
+        },
         sources = {
           explorer = {
             actions = {

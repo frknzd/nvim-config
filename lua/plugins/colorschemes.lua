@@ -61,6 +61,17 @@ local function apply_overrides()
   hl("diffChanged", { fg = p.orange })
   hl("diffRemoved", { fg = p.red })
 
+  -- Snacks' fancy diff preview (<leader>gD and other git pickers).
+  -- Keep context neutral and preserve syntax colors on added/removed lines.
+  hl("SnacksDiffAdd", { bg = "#304127" })
+  hl("SnacksDiffDelete", { bg = "#49252f" })
+  hl("SnacksDiffContext", { bg = p.panel })
+  hl("SnacksDiffAddLineNr", { fg = p.green, bg = "#263520" })
+  hl("SnacksDiffDeleteLineNr", { fg = p.red, bg = "#382027" })
+  hl("SnacksDiffContextLineNr", { fg = p.fg_dim, bg = p.editor })
+  hl("SnacksDiffHeader", { fg = p.cyan, bg = "#303838", bold = true })
+  hl("SnacksHunkHeader", { fg = p.fg_dim, bg = p.editor })
+
   -- LazyVim/lualine/dashboard/snacks git counters
   hl("Added", { fg = p.green })
   hl("Changed", { fg = p.orange })
